@@ -4,8 +4,12 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <unistd.h>
+#include "server_socket.h"
 
-int main(void) {
+#define MAX_BUFFER_SIZE 65535
+
+// creates and binds a socket to the server process
+int create_boundSocket() {
     /*
     Opening a socket: int socket(int domain, int type, int protocol)
     AF_INET: address family that designates type of addresses socket can communicate with (IPv4 in this case). 
@@ -58,45 +62,31 @@ int main(void) {
         return -1;
     }
 
-    // Prepare to receive 1 message from the client. Ordinarily, server would be continuously listening
+    return sock_des;
+}
+
+// server waits to receive a request from any client (blocking). Returns number of bytes written to buffer
+int wait_recv_request(unsigned char *buffer, int socket_fd) {
     /*
     For receiving a message: int recvfrom(int socket_des, char *receiver_buffer, int buffer_len, int flags, struct sockaddr *from, int *from_len)
     The flags argument is normally 0.
     The *from argument RECEIVES the socket address of the sender (for subsequently responding/sending a reply)
     The *fromlen argument specifies the size of the buffer provided for the *from argument.
 
-    recvfrom returns 0 on success, -1 on error
+    recvfrom returns the length of message written to buffer (number of bytes) on success, -1 on error
+    Returns 0 if there are no messages available at the socket or O_NONBLOCK is set on the socket's fd
     */
-    const int SIZE = 255;
-    char message[SIZE];
+    int bytes_read;
     struct sockaddr_in client_socketAddr;
     client_socketAddr.sin_family = AF_INET;
     memset(client_socketAddr.sin_zero, '\0', sizeof(client_socketAddr.sin_zero));
     socklen_t len_client_socketAddr = sizeof(client_socketAddr);
 
-    if (recvfrom(sock_des, message, SIZE, 0, (struct sockaddr *)&client_socketAddr, &len_client_socketAddr) < 0) {
+    if ((bytes_read=recvfrom(sock_des, message, SIZE, 0, (struct sockaddr *)&client_socketAddr, &len_client_socketAddr)) < 0) {
         perror("Error receiving message");
         close(sock_des);
         return -1;
     }
-    printf("Message received from client: %s", message);
-
-    // Send reply back to the client
-    /*
-    Sending a message: int sendto(int sock_des, char *msg, int len, int flags, struct sockaddr *to, int tolen)
-    msg: supplies the message and len supplies the number of bytes in the message
-    flags: normally zero
-    The following flags are available: 1. MSG_OOB (sends out-of-band data on the socket), 2. MSG_DONTROUTE: only for diagnostic or routing programs
-    *to: specifies socket address of the receiver, with tolen specifying the size
-
-    sendto returns 0 on success, -1 on error
-    */
-    char reply_message[] = "Message received. Hello from server!";
-    if (sendto(sock_des, reply_message, strlen(reply_message), 0, (struct sockaddr *)&client_socketAddr, sizeof(client_socketAddr)) < 0) {
-        perror("Sending reply has failed");
-        close(sock_des);
-        return -1;
-    }
-    // close a socket
-    return 0;
+    
+    return bytes_read;
 }
