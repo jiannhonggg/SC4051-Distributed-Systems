@@ -1,12 +1,10 @@
 # SC4051-Distributed-Systems
 
-**Enable WSL**:
-`wsl --install (Ubuntu distro by default)`
+Client Side
+Commands to run the java folder: 
 
-Create any Linux user and password
+javac *.java 
+java MainApp
 
-**Install gcc, g++, make tools at WSL/Ubuntu terminal**:
-1. `sudo apt update`
-2. `sudo apt install build-essential`
-
-**Check that gcc is installed**: `gcc --version`
+Server Side : 
+run server.cpp file 
