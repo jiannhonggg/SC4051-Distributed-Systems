@@ -15,9 +15,9 @@ public class ClientSocket {
         this.serverAddress = InetAddress.getLoopbackAddress();
     }
 
-    public void sendRequest(String message) throws Exception {
-        byte[] buffer = message.getBytes(StandardCharsets.UTF_8);
-        DatagramPacket packet = new DatagramPacket(buffer, buffer.length, serverAddress, serverPort);
+    public void sendRequest(byte[] data) throws Exception {
+        DatagramPacket packet = new DatagramPacket(data, data.length, serverAddress, Constants.PORT);
+        socket.setSoTimeout(2000); // 2-second timeout for retransmission [cite: 105]
         socket.send(packet);
     }
 
