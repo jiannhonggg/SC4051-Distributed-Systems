@@ -30,7 +30,7 @@ public class MainApp {
                     case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         System.out.print("Name: "); String name = sc.nextLine();
                         System.out.print("Password: "); String pw = sc.nextLine();
-                        System.out.print("Currency (1:USD, 2:EUR): "); int curr = Integer.parseInt(sc.nextLine()); //TODO 
+                        System.out.print("Currency (1:USD, 2:JPY, 3:SGD): "); int curr = Integer.parseInt(sc.nextLine()); //TODO 
                         System.out.print("Initial Balance: "); float bal = Float.parseFloat(sc.nextLine());
 
                         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
