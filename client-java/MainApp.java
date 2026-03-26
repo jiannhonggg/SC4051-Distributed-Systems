@@ -27,16 +27,15 @@ public class MainApp {
                 byte[] requestPayload = null;
 
                 switch (choice) {
-                    case "1": // Open Account
+                    case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         System.out.print("Name: "); String name = sc.nextLine();
                         System.out.print("Password: "); String pw = sc.nextLine();
-                        System.out.print("Currency (1:USD, 2:EUR): "); int curr = Integer.parseInt(sc.nextLine());
+                        System.out.print("Currency (1:USD, 2:EUR): "); int curr = Integer.parseInt(sc.nextLine()); //TODO 
                         System.out.print("Initial Balance: "); float bal = Float.parseFloat(sc.nextLine());
 
                         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
                         byte[] pwBytes = pw.getBytes(StandardCharsets.UTF_8);
 
-                        // Layout: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         ByteBuffer openBuf = ByteBuffer.allocate(24 + nameBytes.length + pwBytes.length);
                         openBuf.order(ByteOrder.BIG_ENDIAN);
                         openBuf.putInt(Constants.OP_OPEN);
@@ -50,7 +49,7 @@ public class MainApp {
                         requestPayload = openBuf.array();
                         break;
 
-                    case "2": // Close Account
+                    case "2": // Close Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + AccNum(4) + PwLen(4) + Pw(m)
                         System.out.print("Name: "); String cName = sc.nextLine();
                         System.out.print("Account Number: "); int accNum = Integer.parseInt(sc.nextLine());
                         System.out.print("Password: "); String cPw = sc.nextLine();
@@ -58,7 +57,6 @@ public class MainApp {
                         byte[] cNameBytes = cName.getBytes(StandardCharsets.UTF_8);
                         byte[] cPwBytes = cPw.getBytes(StandardCharsets.UTF_8);
 
-                        // Layout: Op(4) + ReqID(4) + NameLen(4) + Name(n) + AccNum(4) + PwLen(4) + Pw(m)
                         ByteBuffer closeBuf = ByteBuffer.allocate(20 + cNameBytes.length + cPwBytes.length);
                         closeBuf.order(ByteOrder.BIG_ENDIAN);
                         closeBuf.putInt(Constants.OP_CLOSE);
@@ -72,7 +70,7 @@ public class MainApp {
                         break;
 
                     case "3": // Deposit
-                    case "4": // Withdraw
+                    case "4": // Withdraw: Op(4) + ReqID(4) + AccNum(4) + PwLen(4) + Pw(m) + Amt(4)
                         int opCode = choice.equals("3") ? Constants.OP_DEPOSIT : Constants.OP_WITHDRAW;
                         System.out.print("Account Number: "); int dAcc = Integer.parseInt(sc.nextLine());
                         System.out.print("Password: "); String dPw = sc.nextLine();
@@ -80,7 +78,6 @@ public class MainApp {
 
                         byte[] dPwBytes = dPw.getBytes(StandardCharsets.UTF_8);
 
-                        // Layout: Op(4) + ReqID(4) + AccNum(4) + PwLen(4) + Pw(m) + Amt(4)
                         ByteBuffer transBuf = ByteBuffer.allocate(20 + dPwBytes.length);
                         transBuf.order(ByteOrder.BIG_ENDIAN);
                         transBuf.putInt(opCode);
@@ -91,39 +88,18 @@ public class MainApp {
                         transBuf.putFloat(amt);
                         requestPayload = transBuf.array();
                         break;
-
-                    case "5": // Monitor (Callback registration)
-                        System.out.print("Enter monitor interval (seconds): ");
-                        int interval = Integer.parseInt(sc.nextLine());
-                        
-                        ByteBuffer monBuf = ByteBuffer.allocate(12);
-                        monBuf.order(ByteOrder.BIG_ENDIAN);
-                        monBuf.putInt(Constants.OP_MONITOR);
-                        monBuf.putInt(++requestId);
-                        monBuf.putInt(interval);
-                        requestPayload = monBuf.array();
-                        break;
+                
+                    case "5": 
                 }
-
+                
                 if (requestPayload != null) {
-                    client.sendRequest(requestPayload);
-                    // For now, receive response as a simple string for testing
-                    // Eventually, you'll need a binary unmarshaller here too
-                    String response = client.receiveResponse();
+                    // Use the new sendAndReceive for At-Least-Once reliability
+                    String response = client.sendAndReceive(requestPayload);
                     System.out.println("\n[SERVER RESPONSE]: " + response);
-
-                    // If we just registered for monitoring, enter a listen loop
-                    if (choice.equals("5")) {
-                        System.out.println("Monitoring for updates...");
-                        // Simplified: in a real implementation, you'd loop for the interval duration [cite: 59, 64]
-                        String update = client.receiveResponse(); 
-                        System.out.println("[CALLBACK UPDATE]: " + update);
-                    }
                 }
             }
             client.close();
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
             e.printStackTrace();
         }
     }

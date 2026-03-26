@@ -1,35 +1,63 @@
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 
 public class ClientSocket {
     private DatagramSocket socket;
     private InetAddress serverAddress;
-    private int serverPort = 8000;
+    private static final int TIMEOUT = 2000; // 2 seconds
+    private static final int MAX_TRIES = 5;
 
     public ClientSocket() throws Exception {
-        // We initialize the socket once. 
-        // Using 0 lets the OS pick a free port so you don't get "Address in use" errors.
-        this.socket = new DatagramSocket(); 
-        this.serverAddress = InetAddress.getLoopbackAddress();
-    }
-
-    public void sendRequest(byte[] data) throws Exception {
-        DatagramPacket packet = new DatagramPacket(data, data.length, serverAddress, Constants.PORT);
-        socket.setSoTimeout(2000); // 2-second timeout for retransmission [cite: 105]
-        socket.send(packet);
-    }
-
-    public String receiveResponse() throws Exception {
-        byte[] buffer = new byte[255]; // Your original SIZE
-        DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-        socket.receive(packet);
+        this.socket = new DatagramSocket();
         
-        return new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
+        // 1. SET SERVER IP:
+        // Using "127.0.0.1" for testing on own laptop.
+        // Change this to the actual Server IP (e.g., "10.96.x.x") in the NTU Lab.
+        this.serverAddress = InetAddress.getByName("127.0.0.1");
+
+        // 2. SET TIMEOUT:
+        // This is crucial for At-Least-Once semantics so the client doesn't hang forever.
+        this.socket.setSoTimeout(TIMEOUT);
+    }
+
+    /**
+     * Sends a request and waits for a response.
+     * If no response is received within 2 seconds, it re-transmits the data (At-Least-Once).
+     */
+    public String sendAndReceive(byte[] data) throws Exception {
+        DatagramPacket sendPacket = new DatagramPacket(data, data.length, serverAddress, Constants.PORT);
+        
+        byte[] buffer = new byte[1024]; 
+        DatagramPacket receivePacket = new DatagramPacket(buffer, buffer.length);
+
+        int tries = 0;
+        while (tries < MAX_TRIES) {
+            try {
+                // Send the marshalled binary data
+                socket.send(sendPacket);
+                
+                // Attempt to receive the reply
+                socket.receive(receivePacket);
+                
+                // If successful, return the server's message as a String
+                return new String(receivePacket.getData(), 0, receivePacket.getLength(), StandardCharsets.UTF_8);
+                
+            } catch (SocketTimeoutException e) {
+                // This block handles lost Request or Reply packets
+                tries++;
+                System.out.println("[TIMEOUT] No response. Retrying (" + tries + "/" + MAX_TRIES + ")...");
+            }
+        }
+        
+        throw new Exception("Error: Server unreachable after " + MAX_TRIES + " attempts.");
     }
 
     public void close() {
-        if (socket != null) socket.close();
+        if (socket != null) {
+            socket.close();
+        }
     }
 }
