@@ -5,5 +5,5 @@ public class Constants {
     public static final int OP_WITHDRAW = 4;
     public static final int OP_MONITOR = 5;
 
-    public static final int PORT = 2222; // Required for NTU Lab 
+    public static final int PORT = 8080; // Required for NTU Lab 
 }

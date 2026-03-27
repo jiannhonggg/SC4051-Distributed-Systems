@@ -30,21 +30,21 @@ public class MainApp {
                     case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         System.out.print("Name: "); String name = sc.nextLine();
                         System.out.print("Password: "); String pw = sc.nextLine();
-                        System.out.print("Currency (1:USD, 2:JPY, 3:SGD): "); 
+                        System.out.print("Currency (USD, JPY, or SGD): "); Currency curr;
                         try {
-                            Currency curr = Currency.valueOf(Integer.parseInt(sc.nextLine())); //TODO
-                        } catch (NumberFormatException | IllegalArgumentException e) {
+                            curr = Currency.valueOf(sc.nextLine()); //TODO
+                        } catch (IllegalArgumentException e) {
                             System.out.println("The currency you just typed in was not recognised. Please try again");
                             break;
                         }
-                        System.out.print("Initial Balance: "); 
+                        System.out.print("Initial Balance: "); float bal;
                         try {
-                            float bal = Float.parseFloat(sc.nextLine());
+                            bal = Float.parseFloat(sc.nextLine());
                             if (bal < 0) {
                                 System.out.println("Negative account balance is impossible");
                                 break;
                             }
-                        } catch (NumberFormatException | IllegalArgumentException e) {
+                        } catch (IllegalArgumentException e) {
                             System.out.println("The balance you just typed in was not recognised. Please try again");
                             break;
                         }

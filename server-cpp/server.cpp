@@ -12,7 +12,7 @@
 enum Currency: uint32_t { USD = 1, JPY = 2, SGD = 3 };
 
 struct BankAccount {
-    int accountNumber;
+    uint32_t accountNumber;
     std::string name;
     std::string password;
     Currency currency;
@@ -28,8 +28,8 @@ private:
     uint32_t nextAccountNumber = 0;
 
 public:
-    std::string openAccount(const std::string& name, const std::string& pw, int curr, float balance) {
-        BankAccount acc = { ++nextAccountNumber, name, pw, curr, balance };
+    std::string openAccount(const std::string& name, const std::string& pw, Currency curr, float balance) {
+        BankAccount acc = { nextAccountNumber++, name, pw, curr, balance };
         accountDatabase[acc.accountNumber] = acc;
         std::cout << "Created account " << acc.accountNumber << " for " << name << std::endl;
         return "Account Created: " + std::to_string(acc.accountNumber);
@@ -222,11 +222,15 @@ public:
 // Main Entry Point
 // ==========================================
 int main(int argc, char* argv[]) {
-    if (argc != 2 || argv[1] != "alo" && argv[1] != "amo") {
+    if (argc != 2) {
         std::cout << "Too many or too few arguments. Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
         return -1;
     }
     std::string semantics = argv[1];
+    if (semantics != "amo" && semantics != "alo"){
+        std::cout << "Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
+        return -1;
+    }
 
     BankService bank;
     MessageParser parser(semantics);
