@@ -11,12 +11,13 @@ public class ClientSocket {
     private static final int MAX_TRIES = 5;
 
     public ClientSocket() throws Exception {
-        this.socket = new DatagramSocket();
+        this.socket = new DatagramSocket(8000);
         
         // 1. SET SERVER IP:
         // Using "127.0.0.1" for testing on own laptop.
         // Change this to the actual Server IP (e.g., "10.96.x.x") in the NTU Lab.
-        this.serverAddress = InetAddress.getByName("127.0.0.1");
+        // this.serverAddress = InetAddress.getByName("127.0.0.1");
+        this.serverAddress = InetAddress.getLoopbackAddress();
 
         // 2. SET TIMEOUT:
         // This is crucial for At-Least-Once semantics so the client doesn't hang forever.

@@ -9,13 +9,13 @@
 
 #pragma comment(lib, "ws2_32.lib") 
 
-enum Currency { USD = 1, JPY = 2, SGD = 3 };
+enum Currency: uint32_t { USD = 1, JPY = 2, SGD = 3 };
 
 struct BankAccount {
     int accountNumber;
     std::string name;
     std::string password;
-    int currency;
+    Currency currency;
     float balance;
 };
 
@@ -24,8 +24,8 @@ struct BankAccount {
 // ==========================================
 class BankService {
 private:
-    std::map<int, BankAccount> accountDatabase;
-    int nextAccountNumber = 1000;
+    std::map<uint32_t, BankAccount> accountDatabase;
+    uint32_t nextAccountNumber = 0;
 
 public:
     std::string openAccount(const std::string& name, const std::string& pw, int curr, float balance) {
@@ -72,21 +72,22 @@ public:
 class MessageParser {
 private:
     std::map<std::string, std::string> requestHistory;
+    std::string semantics;
 
     uint32_t readInt32(const char* buffer, int& offset) {
         uint32_t net_val;
-        memcpy(&net_val, buffer + offset, 4);
-        offset += 4;
+        memcpy(&net_val, buffer + offset, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
         return ntohl(net_val);
     }
 
     float readFloat(const char* buffer, int& offset) {
         uint32_t net_val;
-        memcpy(&net_val, buffer + offset, 4);
+        memcpy(&net_val, buffer + offset, sizeof(uint32_t));
         uint32_t host_val = ntohl(net_val);
         float f_val;
-        memcpy(&f_val, &host_val, 4);
-        offset += 4;
+        memcpy(&f_val, &host_val, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
         return f_val;
     }
 
@@ -97,7 +98,9 @@ private:
         return str;
     }
 
+
 public:
+    MessageParser (std::string semantics) : semantics(semantics) {}
     std::string processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
         int offset = 0;
         
@@ -119,7 +122,7 @@ public:
             case 1: { // Open Account
                 std::string name = readString(buffer, offset);
                 std::string pw = readString(buffer, offset);
-                int curr = readInt32(buffer, offset);
+                Currency curr = static_cast<Currency>(readInt32(buffer, offset));
                 float balance = readFloat(buffer, offset);
                 response = bank.openAccount(name, pw, curr, balance);
                 break;
@@ -150,7 +153,8 @@ public:
                 std::cout << "Received unknown opcode: " << opcode << std::endl;
         }
 
-        requestHistory[clientKey] = response;
+        if (semantics == "amo")
+            requestHistory[clientKey] = response;
         return response;
     }
 };
@@ -217,10 +221,16 @@ public:
 // ==========================================
 // Main Entry Point
 // ==========================================
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc != 2 || argv[1] != "alo" && argv[1] != "amo") {
+        std::cout << "Too many or too few arguments. Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
+        return -1;
+    }
+    std::string semantics = argv[1];
+
     BankService bank;
-    MessageParser parser;
-    UDPServer server(2222);
+    MessageParser parser(semantics);
+    UDPServer server(8080);
 
     server.start(bank, parser);
 

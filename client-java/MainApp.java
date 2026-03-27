@@ -30,8 +30,25 @@ public class MainApp {
                     case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         System.out.print("Name: "); String name = sc.nextLine();
                         System.out.print("Password: "); String pw = sc.nextLine();
-                        System.out.print("Currency (1:USD, 2:JPY, 3:SGD): "); int curr = Integer.parseInt(sc.nextLine()); //TODO 
-                        System.out.print("Initial Balance: "); float bal = Float.parseFloat(sc.nextLine());
+                        System.out.print("Currency (1:USD, 2:JPY, 3:SGD): "); 
+                        try {
+                            Currency curr = Currency.valueOf(Integer.parseInt(sc.nextLine())); //TODO
+                        } catch (NumberFormatException | IllegalArgumentException e) {
+                            System.out.println("The currency you just typed in was not recognised. Please try again");
+                            break;
+                        }
+                        System.out.print("Initial Balance: "); 
+                        try {
+                            float bal = Float.parseFloat(sc.nextLine());
+                            if (bal < 0) {
+                                System.out.println("Negative account balance is impossible");
+                                break;
+                            }
+                        } catch (NumberFormatException | IllegalArgumentException e) {
+                            System.out.println("The balance you just typed in was not recognised. Please try again");
+                            break;
+                        }
+                        
 
                         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
                         byte[] pwBytes = pw.getBytes(StandardCharsets.UTF_8);
@@ -44,7 +61,7 @@ public class MainApp {
                         openBuf.put(nameBytes);
                         openBuf.putInt(pwBytes.length);
                         openBuf.put(pwBytes);
-                        openBuf.putInt(curr);
+                        openBuf.putInt(curr.getCurrencyNumber());
                         openBuf.putFloat(bal);
                         requestPayload = openBuf.array();
                         break;
