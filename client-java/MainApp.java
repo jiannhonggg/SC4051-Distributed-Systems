@@ -2,6 +2,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.time.Duration;
 
 public class MainApp {
     public static void main(String[] args) {
@@ -68,7 +71,20 @@ public class MainApp {
 
                     case "2": // Close Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + AccNum(4) + PwLen(4) + Pw(m)
                         System.out.print("Name: "); String cName = sc.nextLine();
-                        System.out.print("Account Number: "); int accNum = Integer.parseInt(sc.nextLine());
+                        // Java does not have an unsigned integer type, use long then truncate to int instead
+                        System.out.print("Account Number: "); int accNum;
+                        try {
+                            long unsigned_accNum = Long.parseLong(sc.nextLine());
+                            if ((unsigned_accNum & 0x7fffffff00000000L) > 0 || unsigned_accNum < 0) {
+                                System.out.println("The account number you just typed in exact maximum bounds. Please try again");
+                                break;
+                            }
+                            accNum = (int) unsigned_accNum;
+                        } catch (IllegalArgumentException e) {
+                            e.printStackTrace();
+                            System.out.println("The account number you just typed in was not recognised. Please try again.");
+                            break;
+                        }
                         System.out.print("Password: "); String cPw = sc.nextLine();
 
                         byte[] cNameBytes = cName.getBytes(StandardCharsets.UTF_8);
@@ -89,9 +105,31 @@ public class MainApp {
                     case "3": // Deposit
                     case "4": // Withdraw: Op(4) + ReqID(4) + AccNum(4) + PwLen(4) + Pw(m) + Amt(4)
                         int opCode = choice.equals("3") ? Constants.OP_DEPOSIT : Constants.OP_WITHDRAW;
-                        System.out.print("Account Number: "); int dAcc = Integer.parseInt(sc.nextLine());
+                        System.out.print("Account Number: "); int dAcc;
+                        try {
+                            long unsigned_dAcc = Long.parseLong(sc.nextLine());
+                            if ((unsigned_dAcc & 0x7fffffff00000000L) > 0 || unsigned_dAcc < 0) {
+                                System.out.println("The account number you just typed in exceeded maximum bounds. Please try again");
+                                break;
+                            }
+                            dAcc = (int) unsigned_dAcc;
+                        } catch (IllegalArgumentException e) {
+                            e.printStackTrace();
+                            System.out.println("The account number you just typed in was not recognised. Please try again.");
+                            break;
+                        }
                         System.out.print("Password: "); String dPw = sc.nextLine();
-                        System.out.print("Amount: "); float amt = Float.parseFloat(sc.nextLine());
+                        System.out.print("Amount: "); float amt;
+                        try {
+                            amt = Float.parseFloat(sc.nextLine());
+                            if (amt < 0) {
+                                System.out.println("The amount should not be negative. Please try again.");
+                                break;
+                            }
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("The amount you just typed in was not recognised. Please try again.");
+                            break;
+                        }
 
                         byte[] dPwBytes = dPw.getBytes(StandardCharsets.UTF_8);
 
@@ -105,8 +143,42 @@ public class MainApp {
                         transBuf.putFloat(amt);
                         requestPayload = transBuf.array();
                         break;
-                
-                    case "5": 
+                    case "5":
+                        System.out.print("Monitor Interval (Example usage - 1hrs 30mins 5secs): "); String interval = sc.nextLine();
+                        long value = 0;
+                        Duration d = Duration.ZERO;
+                        // no negative numbers
+                        Pattern p = Pattern.compile("\\b(\\d+)\\s?(h|hr|hrs|hour|hours|min|mins|minute|minutes|m|s|sec|secs|second|seconds)", Pattern.CASE_INSENSITIVE);
+                        Matcher m = p.matcher(interval);
+
+                        while (m.find()) {
+                            value = Long.parseLong(m.group(1));
+                            char unit = m.group(2).toLowerCase().charAt(0);
+                            switch (unit) {
+                                case 'h':
+                                    d = d.plusHours(value);
+                                    break;
+                                case 'm':
+                                    d = d.plusMinutes(value);
+                                    break;
+                                case 's':
+                                    d = d.plusSeconds(value);
+                                    break;
+                            }
+                        }
+
+                        if (d.isZero()) {
+                            System.out.println("Monitor interval is zero. Please try again.");
+                            break;
+                        }
+
+                        ByteBuffer regBuff = ByteBuffer.allocate(16);
+                        regBuff.order(ByteOrder.BIG_ENDIAN);
+                        regBuff.putInt(Constants.OP_MONITOR);
+                        regBuff.putInt(++requestId);
+                        regBuff.putLong(d.toNanos());
+                        requestPayload = regBuff.array();
+                        break;
                 }
                 
                 if (requestPayload != null) {

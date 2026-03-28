@@ -6,6 +6,10 @@
 #include <map>
 #include <string>
 #include <cstdint>
+#include <chrono>
+#include <functional>
+#include <thread>
+#include <mutex>
 
 #pragma comment(lib, "ws2_32.lib") 
 
@@ -17,6 +21,12 @@ struct BankAccount {
     std::string password;
     Currency currency;
     float balance;
+};
+
+struct ClientCallbackDetails {
+    uint32_t id;
+    struct in_addr client_addr;
+    uint16_t client_port;
 };
 
 // ==========================================
@@ -74,6 +84,10 @@ private:
     std::map<std::string, std::string> requestHistory;
     std::string semantics;
 
+    std::vector<ClientCallbackDetails> clientsMonitoring;
+    uint32_t clientId;
+    std::mutex m;
+
     uint32_t readInt32(const char* buffer, int& offset) {
         uint32_t net_val;
         memcpy(&net_val, buffer + offset, sizeof(uint32_t));
@@ -98,9 +112,18 @@ private:
         return str;
     }
 
+    int64_t readLong64(const char* buffer, int& offset) {
+        uint32_t tmp = readInt32(buffer, offset);
+        int64_t net_val = ((uint64_t)(tmp & 0xFFFFFFFF) << 32);
+        tmp = readInt32(buffer, offset);
+        return net_val | tmp;
+    }
+
 
 public:
-    MessageParser (std::string semantics) : semantics(semantics) {}
+    MessageParser (std::string semantics) : semantics(semantics) {
+        clientId = 0;
+    }
     std::string processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
         int offset = 0;
         
@@ -146,6 +169,12 @@ public:
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
                 response = bank.withdraw(accNum, pw, amount);
+                break;
+            }
+            case 5: { // Monitor
+                int64_t duration = readLong64(buffer, offset);
+                clientsMonitoring.push_back({clientId++, client_socketAddr.sin_addr, ntohs(client_socketAddr.sin_port)});
+                // TODO: 
                 break;
             }
             default:
