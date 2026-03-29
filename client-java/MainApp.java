@@ -10,7 +10,58 @@ public class MainApp {
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
         try {
-            ClientSocket client = new ClientSocket();
+            String options = String.join(" ", args);
+            Pattern p = Pattern.compile("\\b--(\\w+)=([\\d.]+)\\b");
+            Matcher m = p.matcher(options);
+            int client_port = 8000, server_port = 8080;
+            String server_ip = "127.0.0.1";
+            while (m.find()) {
+                String key = m.group(1);
+                String value = m.group(2);
+
+                switch(key) {
+                    case "client_port":
+                        try {
+                            client_port = Integer.parseInt(value);
+                            if (client_port < 0 || client_port > 65535) {
+                                System.out.println("The client port is invalid. Please try again.");
+                            }
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("The client port you just typed in was not recognised. Please try again.");
+                            return;
+                        }
+                        break;
+                    case "server_ip":
+                        String[] octets = value.split(".");
+                        try {
+                            for (String octet : octets) {
+                                int parsed_octet = Integer.parseInt(octet);
+                                if (parsed_octet < 0 || parsed_octet > 255) {
+                                    System.out.println("This IP address is invalid. Please try again.");
+                                    return;
+                                }
+                            }
+                            server_ip = value;
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("The IP address you typed in was not recognised. Please try again.");
+                            return;
+                        }
+                        break;
+                    case "server_port":
+                        try {
+                            server_port = Integer.parseInt(value);
+                            if (server_port < 0 || server_port > 65535) {
+                                System.out.println("The server port is invalid. Please try again.");
+                            }
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("The server port you just typed in was not recognised. Please try again.");
+                            return;
+                        }
+                        break;
+                }
+            }
+            ClientSocket client = new ClientSocket(client_port, server_ip, server_port);
+
             boolean running = true;
             int requestId = 0; 
 
@@ -148,8 +199,8 @@ public class MainApp {
                         long value = 0;
                         Duration d = Duration.ZERO;
                         // no negative numbers
-                        Pattern p = Pattern.compile("\\b(\\d+)\\s?(h|hr|hrs|hour|hours|min|mins|minute|minutes|m|s|sec|secs|second|seconds)", Pattern.CASE_INSENSITIVE);
-                        Matcher m = p.matcher(interval);
+                        p = Pattern.compile("\\b(\\d+)\\s?(h|hr|hrs|hour|hours|min|mins|minute|minutes|m|s|sec|secs|second|seconds)", Pattern.CASE_INSENSITIVE);
+                        m = p.matcher(interval);
 
                         while (m.find()) {
                             value = Long.parseLong(m.group(1));

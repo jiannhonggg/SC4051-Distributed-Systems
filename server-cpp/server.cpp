@@ -7,9 +7,13 @@
 #include <string>
 #include <cstdint>
 #include <chrono>
-#include <functional>
+#include <format>
+#include <sstream>
+#include <regex>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <queue>
 
 #pragma comment(lib, "ws2_32.lib") 
 
@@ -27,6 +31,12 @@ struct ClientCallbackDetails {
     uint32_t id;
     struct in_addr client_addr;
     uint16_t client_port;
+    std::chrono::steady_clock::time_point expiry;
+
+    // overload > operator
+    bool operator > (const ClientCallbackDetails& other) const {
+        return expiry > other.expiry;
+    }
 };
 
 // ==========================================
@@ -42,6 +52,8 @@ public:
         BankAccount acc = { nextAccountNumber++, name, pw, curr, balance };
         accountDatabase[acc.accountNumber] = acc;
         std::cout << "Created account " << acc.accountNumber << " for " << name << std::endl;
+        std::printf("Unmarshalled details: name: %s, password: %s, currency: %d, balance: %.2f", name.c_str(), pw.c_str(), curr, balance);
+        //for 
         return "Account Created: " + std::to_string(acc.accountNumber);
     }
 
@@ -57,7 +69,7 @@ public:
     std::string deposit(int accNum, const std::string& pw, float amount) {
         if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
             accountDatabase[accNum].balance += amount;
-            std::cout << "Deposited to " << accNum << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
+            std::cout << "Deposited into account" << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
         return "Error: Invalid credentials.";
@@ -69,11 +81,22 @@ public:
                 return "Error: Insufficient balance.";
             }
             accountDatabase[accNum].balance -= amount;
-            std::cout << "Withdrew from " << accNum << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
+            std::cout << "Withdrew from account " << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
         return "Error: Invalid credentials.";
     }
+};
+
+// ==========================================
+// IterablePriorityQueue
+// ==========================================
+template <typename T, typename Container = std::vector<T>, typename Compare = std::less<T>>
+class IterablePriorityQueue : public std::priority_queue<T, Container, Compare> {
+    public:
+        Container& internal_vector_form() {
+            return this->c;
+        }
 };
 
 // ==========================================
@@ -84,9 +107,12 @@ private:
     std::map<std::string, std::string> requestHistory;
     std::string semantics;
 
-    std::vector<ClientCallbackDetails> clientsMonitoring;
+    IterablePriorityQueue<ClientCallbackDetails, std::vector<ClientCallbackDetails>, std::greater<ClientCallbackDetails>> clientsMonitoring;
     uint32_t clientId;
     std::mutex m;
+    std::condition_variable client_added;
+    bool running;
+    std::thread cleaner_thread;
 
     uint32_t readInt32(const char* buffer, int& offset) {
         uint32_t net_val;
@@ -121,8 +147,14 @@ private:
 
 
 public:
-    MessageParser (std::string semantics) : semantics(semantics) {
-        clientId = 0;
+    MessageParser (std::string semantics) : semantics(semantics), running(true), clientId(0) {
+        cleaner_thread = std::thread(&MessageParser::delete_expired_client_record, this);
+    }
+    ~MessageParser() {
+        std::lock_guard<std::mutex> lock(m);
+        running = false;
+        client_added.notify_all();
+        cleaner_thread.join();
     }
     std::string processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
         int offset = 0;
@@ -173,8 +205,17 @@ public:
             }
             case 5: { // Monitor
                 int64_t duration = readLong64(buffer, offset);
-                clientsMonitoring.push_back({clientId++, client_socketAddr.sin_addr, ntohs(client_socketAddr.sin_port)});
-                // TODO: 
+                std::cout << "duration: " << duration << std::endl;
+                auto expiry = std::chrono::steady_clock::now() + std::chrono::nanoseconds(duration);
+                m.lock();
+                clientsMonitoring.push({clientId++, client_socketAddr.sin_addr, ntohs(client_socketAddr.sin_port), expiry});
+                for (const auto& item : clientsMonitoring.internal_vector_form()) {
+                    std::cout << "Testing: " << item.id << ": " << item.client_port << std::endl;
+                }
+                std::cout << "------" << std::endl;
+                m.unlock();
+                client_added.notify_one(); // wake thread
+                response = std::string("ACK: Server will send updates for ") + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(duration)).count()) + std::string(" seconds");
                 break;
             }
             default:
@@ -185,6 +226,30 @@ public:
         if (semantics == "amo")
             requestHistory[clientKey] = response;
         return response;
+    }
+
+    void delete_expired_client_record() {
+        std::cout << "Thread created" << std::endl;
+        std::unique_lock<std::mutex> lock(m);
+        while (running) {
+            if (clientsMonitoring.empty()) {
+                client_added.wait(lock, [this] { return !clientsMonitoring.empty() || !running; });
+            } else {
+                auto nextExpiry = clientsMonitoring.top().expiry;
+                if (nextExpiry <= std::chrono::steady_clock::now()) {
+                    clientsMonitoring.pop();
+                    continue;
+                }
+                bool status = client_added.wait_until(lock, nextExpiry, [this, &nextExpiry] {
+                    return !running || (!clientsMonitoring.empty() && clientsMonitoring.top().expiry < nextExpiry);
+                }); // lock reacquired on notification, predicate true, or on next expiry
+                if (status) // predicate evaluates to true
+                    continue;
+                else { // nextExpiry has elapsed, pop
+                    clientsMonitoring.pop();
+                }
+            }
+        }
     }
 };
 
@@ -241,6 +306,7 @@ public:
             if (bytesReceived == SOCKET_ERROR) continue;
 
             std::string response = parser.processMessage(buffer, client_socketAddr, bank);
+            std::cout << "Produced response: " << response << std::endl;
 
             sendto(sock_des, response.c_str(), response.length(), 0, (struct sockaddr*)&client_socketAddr, sizeof(client_socketAddr));
         }
@@ -251,7 +317,7 @@ public:
 // Main Entry Point
 // ==========================================
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
+    if (argc < 2) {
         std::cout << "Too many or too few arguments. Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
         return -1;
     }
@@ -260,10 +326,24 @@ int main(int argc, char* argv[]) {
         std::cout << "Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
         return -1;
     }
+    // TODO: add in optional argument for server port
+    std::ostringstream oss;
+    for (size_t i = 1; i < argc; i++) {
+        oss << argv[i];
+        if (i + 1 < argc)
+            oss << " ";
+    }
+    std::string options = oss.str();
+    std::regex r(R"(--server_port=(\d+))");
+    std::smatch m;
+    int port = 8080;
+    if (std::regex_search(options, m, r)) {
+        port = stoi(m[1].str());
+    }
 
     BankService bank;
     MessageParser parser(semantics);
-    UDPServer server(8080);
+    UDPServer server(port);
 
     server.start(bank, parser);
 

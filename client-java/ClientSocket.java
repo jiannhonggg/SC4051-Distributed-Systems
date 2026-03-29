@@ -7,17 +7,19 @@ import java.nio.charset.StandardCharsets;
 public class ClientSocket {
     private DatagramSocket socket;
     private InetAddress serverAddress;
+    private int serverPort;
     private static final int TIMEOUT = 2000; // 2 seconds
     private static final int MAX_TRIES = 5;
 
-    public ClientSocket() throws Exception {
-        this.socket = new DatagramSocket(8000);
+    public ClientSocket(int port, String server_ip, int server_port) throws Exception {
+        this.socket = new DatagramSocket(port);
         
         // 1. SET SERVER IP:
         // Using "127.0.0.1" for testing on own laptop.
         // Change this to the actual Server IP (e.g., "10.96.x.x") in the NTU Lab.
-        // this.serverAddress = InetAddress.getByName("127.0.0.1");
-        this.serverAddress = InetAddress.getLoopbackAddress();
+        this.serverAddress = InetAddress.getByName(server_ip);
+        this.serverPort = server_port;
+        // this.serverAddress = InetAddress.getLoopbackAddress();
 
         // 2. SET TIMEOUT:
         // This is crucial for At-Least-Once semantics so the client doesn't hang forever.
@@ -29,7 +31,7 @@ public class ClientSocket {
      * If no response is received within 2 seconds, it re-transmits the data (At-Least-Once).
      */
     public String sendAndReceive(byte[] data) throws Exception {
-        DatagramPacket sendPacket = new DatagramPacket(data, data.length, serverAddress, Constants.PORT);
+        DatagramPacket sendPacket = new DatagramPacket(data, data.length, serverAddress, serverPort);
         
         byte[] buffer = new byte[1024]; 
         DatagramPacket receivePacket = new DatagramPacket(buffer, buffer.length);
