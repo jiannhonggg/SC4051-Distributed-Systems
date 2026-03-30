@@ -12,7 +12,7 @@ public class ClientSocket {
     private static final int MAX_TRIES = 5;
 
     public ClientSocket(int port, String server_ip, int server_port) throws Exception {
-        this.socket = new DatagramSocket(port);
+        this.socket = new DatagramSocket();
         
         // 1. SET SERVER IP:
         // Using "127.0.0.1" for testing on own laptop.
@@ -56,6 +56,28 @@ public class ClientSocket {
         }
         
         throw new Exception("Error: Server unreachable after " + MAX_TRIES + " attempts.");
+    }
+
+    /**
+     * Receive function specifically for the monitor service. Set SO_TIMEOUT to interval
+     */
+    public byte[] monitor_receive() throws Exception {
+        byte[] buffer = new byte[1024]; 
+        DatagramPacket receivePacket = new DatagramPacket(buffer, buffer.length);
+        try {
+            socket.receive(receivePacket);
+            return receivePacket.getData();
+        } catch (SocketTimeoutException e) {
+            return new byte[0];
+        }
+    }
+
+    public void set_timeout(int interval) throws Exception{
+        this.socket.setSoTimeout(interval);
+    }
+
+    public void reset_timeout() throws Exception{
+        this.socket.setSoTimeout(TIMEOUT);
     }
 
     public void close() {

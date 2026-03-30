@@ -79,6 +79,7 @@ public class MainApp {
                 if (choice.equalsIgnoreCase("q")) break;
 
                 byte[] requestPayload = null;
+                Duration d = Duration.ZERO;
 
                 switch (choice) {
                     case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
@@ -197,7 +198,6 @@ public class MainApp {
                     case "5":
                         System.out.print("Monitor Interval (Example usage - 1hrs 30mins 5secs): "); String interval = sc.nextLine();
                         long value = 0;
-                        Duration d = Duration.ZERO;
                         // no negative numbers
                         p = Pattern.compile("\\b(\\d+)\\s?(h|hr|hrs|hour|hours|min|mins|minute|minutes|m|s|sec|secs|second|seconds)", Pattern.CASE_INSENSITIVE);
                         m = p.matcher(interval);
@@ -235,61 +235,100 @@ public class MainApp {
                 if (requestPayload != null) {
                     // Use the new sendAndReceive for At-Least-Once reliability
                     byte[] response = client.sendAndReceive(requestPayload);
-                    ByteBuffer res_buf = ByteBuffer.wrap(response).order(ByteOrder.BIG_ENDIAN); // network order BIG_ENDIAN
-                    int opcode = res_buf.getInt(), accNum;
-                    float balance;
+                    
+                    boolean start_clock = false;
+                    long start_time, end_time;
 
-                    byte[] reply_type = new byte[res_buf.getInt()];
-                    res_buf.get(reply_type);
-                    String reType = new String(reply_type, StandardCharsets.UTF_8).trim(), response_str = "";
-                    System.out.println("reType: " + reType);
-                    switch (opcode) {
-                        case Constants.OP_OPEN:
-                            if (reType.equals("SUCCESS")) {
-                                accNum = res_buf.getInt();
-                                response_str = "ACCOUNT CREATION SUCCESSFUL, account number: " + accNum;
-                            }
-                            break;
-                        case Constants.OP_CLOSE:
-                            if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
-                                byte[] cl_error = new byte[res_buf.getInt()];
-                                res_buf.get(cl_error);
-                                String cl_error_msg = new String(cl_error, StandardCharsets.UTF_8);
-                                response_str = "ACCOUNT CLOSURE ERROR: " + cl_error_msg;
-                            } else if (reType.equals("SUCCESS")) {
-                                byte[] cl_success = new byte[res_buf.getInt()];
-                                res_buf.get(cl_success);
-                                String cl_success_msg = new String(cl_success, StandardCharsets.UTF_8);
-                                response_str = "ACCOUNT CLOSURE SUCCESSFUL: " + cl_success_msg;
-                            }
-                            break;
-                        case Constants.OP_DEPOSIT:
-                        case Constants.OP_WITHDRAW:
-                            String prefix;
-                            if (reType.equals("SUCCESS")) {
-                                balance = res_buf.getFloat();
-                                prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT SUCCESSFUL" : "WITHDRAW SUCCESSFUL";
-                                response_str = String.format("%s, new balance: %.2f", prefix, balance);
-                            } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
-                                byte[] d_error = new byte[res_buf.getInt()];
-                                res_buf.get(d_error);
-                                String d_error_msg = new String(d_error, StandardCharsets.UTF_8);
-                                prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT ERROR: " : "WITHDRAW ERROR: ";
-                                response_str = prefix + d_error_msg;
-                            } else if (reType.equals("ERROR_INSUFFICIENT_BALANCE")) {
-                                byte[] w_error = new byte[res_buf.getInt()];
-                                res_buf.get(w_error);
-                                String w_error_msg = new String(w_error, StandardCharsets.UTF_8);
-                                response_str = "WITHDRAW ERROR: " + w_error_msg;
-                            }
-                            break;
-                    }
+                    ByteBuffer res_buf = ByteBuffer.wrap(response).order(ByteOrder.BIG_ENDIAN); // network order BIG_ENDIAN
+                    int opcode = res_buf.getInt();
+                    String response_str = presentData(res_buf, opcode);
+                    
                     System.out.println("\n[SERVER RESPONSE]: " + response_str);
+                    if (opcode == Constants.OP_MONITOR) {
+                        byte[] data;
+                        end_time = System.nanoTime() + d.toNanos();
+                        client.set_timeout((int) Math.min(Integer.MAX_VALUE, Math.max(0L, d.toMillis())));
+                        start_clock = true;
+                        while ((data = client.monitor_receive()).length != 0) {
+                            // prevent negative timeout
+                            int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, Duration.ofNanos(end_time - System.nanoTime()).toMillis()));
+                            client.set_timeout(timeout);
+                            ByteBuffer data_buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+                            response_str = presentData(data_buf, data_buf.getInt());
+                            System.out.println("\n[MONITOR UPDATE]: " + response_str);
+                        }
+                    }
+
+                    if (start_clock) {
+                        client.reset_timeout();
+                        start_clock = false;
+                    }
                 }
             }
             client.close();
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private static String presentData(ByteBuffer res_buf, int opcode) {
+        int accNum;
+        float balance, amount;
+
+        byte[] reply_type = new byte[res_buf.getInt()];
+        res_buf.get(reply_type);
+        String reType = new String(reply_type, StandardCharsets.UTF_8).trim(), response_str = "";
+        switch (opcode) {
+            case Constants.OP_OPEN:
+                if (reType.equals("SUCCESS")) {
+                    accNum = res_buf.getInt();
+                    response_str = "ACCOUNT CREATION SUCCESSFUL, account number: " + accNum;
+                }
+                break;
+            case Constants.OP_CLOSE:
+                if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                    byte[] cl_error = new byte[res_buf.getInt()];
+                    res_buf.get(cl_error);
+                    String cl_error_msg = new String(cl_error, StandardCharsets.UTF_8);
+                    response_str = "ACCOUNT CLOSURE ERROR: " + cl_error_msg;
+                } else if (reType.equals("SUCCESS")) {
+                    byte[] cl_success = new byte[res_buf.getInt()];
+                    res_buf.get(cl_success);
+                    String cl_success_msg = new String(cl_success, StandardCharsets.UTF_8);
+                    response_str = "ACCOUNT CLOSURE SUCCESSFUL: " + cl_success_msg;
+                }
+                break;
+            case Constants.OP_DEPOSIT:
+            case Constants.OP_WITHDRAW:
+                String prefix, action;
+                if (reType.equals("SUCCESS")) {
+                    accNum = res_buf.getInt();
+                    amount = res_buf.getFloat();
+                    balance = res_buf.getFloat();
+                    prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT SUCCESSFUL" : "WITHDRAW SUCCESSFUL";
+                    action = (opcode == Constants.OP_DEPOSIT) ? "Deposited" : "Withdrawn";
+                    response_str = String.format("%s: %s %.2f into account %d, new balance: %.2f", prefix, action, amount, accNum, balance);
+                } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                    byte[] d_error = new byte[res_buf.getInt()];
+                    res_buf.get(d_error);
+                    String d_error_msg = new String(d_error, StandardCharsets.UTF_8);
+                    prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT ERROR: " : "WITHDRAW ERROR: ";
+                    response_str = prefix + d_error_msg;
+                } else if (reType.equals("ERROR_INSUFFICIENT_BALANCE")) {
+                    byte[] w_error = new byte[res_buf.getInt()];
+                    res_buf.get(w_error);
+                    String w_error_msg = new String(w_error, StandardCharsets.UTF_8);
+                    response_str = "WITHDRAW ERROR: " + w_error_msg;
+                }
+                break;
+            case Constants.OP_MONITOR:
+                byte[] ack = new byte[res_buf.getInt()];
+                res_buf.get(ack);
+                String ack_msg = new String(ack, StandardCharsets.UTF_8);
+                response_str = "ACK: " + ack_msg;
+                break;
+        }
+
+        return response_str;
     }
 }

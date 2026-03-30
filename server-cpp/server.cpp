@@ -134,6 +134,11 @@ public:
             marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallStrings(buffer.data(), reply_msg, &offset);
+
+            for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+                sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+                sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+            }
             return buffer;
             // return reply_msg;
         }
@@ -163,11 +168,19 @@ public:
             accountDatabase[accNum].balance += amount;
             std::cout << "Deposited into account" << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length()); // 32 bits for float
+            buffer.resize(sizeof(uint32_t) * 5 + reply_id.length()); // 32 bits for float
             offset = 0;
             marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
+            marshallInt32(buffer.data(), accNum, &offset);
+            marshallFloat32(buffer.data(), amount, &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+
+            for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+                sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+                sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+            }
+
             return buffer;
             // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
@@ -207,13 +220,21 @@ public:
                 // return "Error: Insufficient balance.";
             }
             accountDatabase[accNum].balance -= amount;
-            std::cout << "Withdrew from account " << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
+            std::cout << "Withdrew from account " << accNum << " an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t)*3 + reply_id.length());
+            buffer.resize(sizeof(uint32_t)*5 + reply_id.length());
             offset = 0;
             marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
+            marshallInt32(buffer.data(), accNum, &offset);
+            marshallFloat32(buffer.data(), amount, &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+
+            for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+                sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+                sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+            }
+
             return buffer;
             // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
@@ -351,7 +372,8 @@ public:
                 reply_id = "ACK";
                 reply_msg = std::string("Server will send updates for ") + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(duration)).count()) + std::string(" seconds");
                 offset = 0;
-                response.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + reply_msg.length());
+                response.resize(sizeof(uint32_t)*3 + reply_id.length() + reply_msg.length());
+                marshallInt32(response.data(), opcode, &offset);
                 marshallStrings(response.data(), reply_id, &offset);
                 marshallStrings(response.data(), reply_msg, &offset);
                 break;
@@ -359,7 +381,8 @@ public:
             default:
                 reply_id = "ERROR";
                 error_msg = "Unknown Opcode" + std::to_string(opcode);
-                response.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+                response.resize(sizeof(uint32_t)*3 + reply_id.length() + error_msg.length());
+                marshallInt32(response.data(), opcode, &offset);
                 marshallStrings(response.data(), reply_id, &offset);
                 marshallStrings(response.data(), error_msg, &offset);
                 std::cout << "Received unknown opcode: " << opcode << std::endl;
