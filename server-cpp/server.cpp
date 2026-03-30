@@ -14,6 +14,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <queue>
+#include <iomanip>
 
 #pragma comment(lib, "ws2_32.lib") 
 
@@ -39,6 +40,38 @@ struct ClientCallbackDetails {
     }
 };
 
+void marshallStrings(uint8_t* p, std::string s, int* offset) {
+    // have to cast size_t to a fixed size. Limit to 32 bits
+    uint32_t s_len = htonl(static_cast<uint32_t>(s.length()));
+    std::memcpy(p+*offset, &s_len, sizeof(uint32_t)); // push string length
+    *offset += sizeof(uint32_t);
+    std::memcpy(p+*offset, s.c_str(), s.length()); // push string characters
+    *offset += s.length();
+}
+
+void marshallInt32(uint8_t* p, uint32_t i, int* offset) {
+    uint32_t i_tmp = htonl(i);
+    std::memcpy(p+*offset, &i_tmp, sizeof(uint32_t));
+    *offset += sizeof(uint32_t);
+}
+
+void marshallFloat32(uint8_t *p, float f, int* offset) {
+    uint32_t f_tmp;
+    std::memcpy(&f_tmp, &f, sizeof(float));
+    marshallInt32(p, f_tmp, offset);
+}
+
+// ==========================================
+// IterablePriorityQueue
+// ==========================================
+template <typename T, typename Container = std::vector<T>, typename Compare = std::less<T>>
+class IterablePriorityQueue : public std::priority_queue<T, Container, Compare> {
+public:
+    Container& internal_vector_form() {
+        return this->c;
+    }
+};
+
 // ==========================================
 // BankService: Core Business Logic
 // ==========================================
@@ -48,55 +81,118 @@ private:
     uint32_t nextAccountNumber = 0;
 
 public:
-    std::string openAccount(const std::string& name, const std::string& pw, Currency curr, float balance) {
+    std::vector<uint8_t> openAccount(
+        const std::string& name, 
+        const std::string& pw, 
+        Currency curr, 
+        float balance, 
+        std::vector<ClientCallbackDetails>* clientsMonitoring
+    ) {
         BankAccount acc = { nextAccountNumber++, name, pw, curr, balance };
         accountDatabase[acc.accountNumber] = acc;
         std::cout << "Created account " << acc.accountNumber << " for " << name << std::endl;
         std::printf("Unmarshalled details: name: %s, password: %s, currency: %d, balance: %.2f", name.c_str(), pw.c_str(), curr, balance);
-        //for 
-        return "Account Created: " + std::to_string(acc.accountNumber);
+
+        // TODO: send information to 
+
+        std::string reply_id = "SUCCESS";
+        std::vector<uint8_t> buffer;
+        int offset = 0;
+        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t)); // set string length to uint32_t
+        marshallStrings(buffer.data(), reply_id, &offset);
+        std::cout << "offset: " << offset << std::endl;
+        marshallInt32(buffer.data(), acc.accountNumber, &offset);
+        return buffer;
+        // return "Account Created: " + std::to_string(acc.accountNumber);
     }
 
-    std::string closeAccount(const std::string& name, int accNum, const std::string& pw) {
+    std::vector<uint8_t> closeAccount(const std::string& name, int accNum, const std::string& pw) {
+        std::string reply_id;
+        std::vector<uint8_t> buffer;
+        int offset;
         if (accountDatabase.count(accNum) && accountDatabase[accNum].name == name && accountDatabase[accNum].password == pw) {
             accountDatabase.erase(accNum);
             std::cout << "Closed account " << accNum << std::endl;
-            return "Account " + std::to_string(accNum) + " closed successfully.";
+            std::string reply_msg = "Account " + std::to_string(accNum) + " closed successfully.";
+
+            reply_id = "SUCCESS";
+            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + reply_msg.length());
+            offset = 0;
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallStrings(buffer.data(), reply_msg, &offset);
+            return buffer;
+            // return reply_msg;
         }
-        return "Error: Invalid credentials or account not found.";
+        reply_id = "ERROR_ACCOUNT_NOT_FOUND";
+        std::string error_msg = "Error: Invalid credentials or account not found.";
+        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        offset = 0;
+        marshallStrings(buffer.data(), reply_id, &offset);
+        marshallStrings(buffer.data(), error_msg, &offset);
+        return buffer;
+        // return error_msg;
     }
 
-    std::string deposit(int accNum, const std::string& pw, float amount) {
+    std::vector<uint8_t> deposit(int accNum, const std::string& pw, float amount) {
+        std::string reply_id;
+        std::vector<uint8_t> buffer;
+        int offset;
         if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
             accountDatabase[accNum].balance += amount;
             std::cout << "Deposited into account" << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
-            return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
+            reply_id = "SUCCESS";
+            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t)); // 32 bits for float
+            offset = 0;
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+            return buffer;
+            // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
-        return "Error: Invalid credentials.";
+        reply_id = "ERROR_ACCOUNT_NOT_FOUND";
+        std::string error_msg = "Error: Invalid credentials";
+        offset = 0;
+        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        marshallStrings(buffer.data(), reply_id, &offset);
+        marshallStrings(buffer.data(), error_msg, &offset);
+        return buffer;
+        // return error_msg;
     }
 
-    std::string withdraw(int accNum, const std::string& pw, float amount) {
+    std::vector<uint8_t> withdraw(int accNum, const std::string& pw, float amount) {
+        std::string reply_id;
+        std::vector<uint8_t> buffer;
+        std::string error_msg;
+        int offset;
         if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
             if (accountDatabase[accNum].balance < amount) {
-                return "Error: Insufficient balance.";
+                reply_id = "ERROR_INSUFFICIENT_BALANCE";
+                error_msg = "Error: Insufficient balance.";
+                buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+                offset = 0;
+                marshallStrings(buffer.data(), reply_id, &offset);
+                marshallStrings(buffer.data(), error_msg, &offset);
+                return buffer;
+                // return "Error: Insufficient balance.";
             }
             accountDatabase[accNum].balance -= amount;
             std::cout << "Withdrew from account " << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
-            return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
+            reply_id = "SUCCESS";
+            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t));
+            offset = 0;
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+            return buffer;
+            // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
-        return "Error: Invalid credentials.";
+        reply_id = "ERROR_ACCOUNT_NOT_FOUND";
+        error_msg = "Error: Invalid credentials";
+        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        offset = 0;
+        marshallStrings(buffer.data(), reply_id, &offset);
+        marshallStrings(buffer.data(), error_msg, &offset);
+        return buffer;
+        // return "Error: Invalid credentials.";
     }
-};
-
-// ==========================================
-// IterablePriorityQueue
-// ==========================================
-template <typename T, typename Container = std::vector<T>, typename Compare = std::less<T>>
-class IterablePriorityQueue : public std::priority_queue<T, Container, Compare> {
-    public:
-        Container& internal_vector_form() {
-            return this->c;
-        }
 };
 
 // ==========================================
@@ -104,7 +200,7 @@ class IterablePriorityQueue : public std::priority_queue<T, Container, Compare> 
 // ==========================================
 class MessageParser {
 private:
-    std::map<std::string, std::string> requestHistory;
+    std::map<std::string, std::vector<uint8_t>> requestHistory;
     std::string semantics;
 
     IterablePriorityQueue<ClientCallbackDetails, std::vector<ClientCallbackDetails>, std::greater<ClientCallbackDetails>> clientsMonitoring;
@@ -156,7 +252,7 @@ public:
         client_added.notify_all();
         cleaner_thread.join();
     }
-    std::string processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
+    std::vector<uint8_t> processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
         int offset = 0;
         
         int opcode = readInt32(buffer, offset);
@@ -171,7 +267,10 @@ public:
             return requestHistory[clientKey];
         }
 
-        std::string response;
+        std::vector<uint8_t> response;
+        std::string reply_id;
+        std::string reply_msg;
+        std::string error_msg;
 
         switch (opcode) {
             case 1: { // Open Account
@@ -179,7 +278,7 @@ public:
                 std::string pw = readString(buffer, offset);
                 Currency curr = static_cast<Currency>(readInt32(buffer, offset));
                 float balance = readFloat(buffer, offset);
-                response = bank.openAccount(name, pw, curr, balance);
+                response = bank.openAccount(name, pw, curr, balance, &(clientsMonitoring.internal_vector_form()));
                 break;
             }
             case 2: { // Close Account
@@ -214,12 +313,21 @@ public:
                 }
                 std::cout << "------" << std::endl;
                 m.unlock();
-                client_added.notify_one(); // wake thread
-                response = std::string("ACK: Server will send updates for ") + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(duration)).count()) + std::string(" seconds");
+                client_added.notify_one(); // wake 
+                reply_id = "ACK";
+                reply_msg = std::string("Server will send updates for ") + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(duration)).count()) + std::string(" seconds");
+                offset = 0;
+                response.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + reply_msg.length());
+                marshallStrings(response.data(), reply_id, &offset);
+                marshallStrings(response.data(), reply_msg, &offset);
                 break;
             }
             default:
-                response = "Error: Unknown Opcode " + std::to_string(opcode);
+                reply_id = "ERROR";
+                error_msg = "Unknown Opcode" + std::to_string(opcode);
+                response.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+                marshallStrings(response.data(), reply_id, &offset);
+                marshallStrings(response.data(), error_msg, &offset);
                 std::cout << "Received unknown opcode: " << opcode << std::endl;
         }
 
@@ -305,10 +413,14 @@ public:
             
             if (bytesReceived == SOCKET_ERROR) continue;
 
-            std::string response = parser.processMessage(buffer, client_socketAddr, bank);
-            std::cout << "Produced response: " << response << std::endl;
+            std::vector<uint8_t> response = parser.processMessage(buffer, client_socketAddr, bank);
+            std::cout << std::endl << "size: " << response.size() << std::endl;
+            for (size_t i = 0; i < response.size(); ++i) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(response[i]) << " ";
+            }
+            std::cout << std::dec << std::endl;
 
-            sendto(sock_des, response.c_str(), response.length(), 0, (struct sockaddr*)&client_socketAddr, sizeof(client_socketAddr));
+            sendto(sock_des, reinterpret_cast<const char*>(response.data()), response.size(), 0, (struct sockaddr*)&client_socketAddr, sizeof(client_socketAddr));
         }
     }
 };
@@ -326,7 +438,6 @@ int main(int argc, char* argv[]) {
         std::cout << "Please specify the invocation semantics as amo (at-most-once) or alo (at-least-once)" << std::endl;
         return -1;
     }
-    // TODO: add in optional argument for server port
     std::ostringstream oss;
     for (size_t i = 1; i < argc; i++) {
         oss << argv[i];
