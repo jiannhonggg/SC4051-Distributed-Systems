@@ -30,7 +30,7 @@ public class ClientSocket {
      * Sends a request and waits for a response.
      * If no response is received within 2 seconds, it re-transmits the data (At-Least-Once).
      */
-    public String sendAndReceive(byte[] data) throws Exception {
+    public byte[] sendAndReceive(byte[] data) throws Exception {
         DatagramPacket sendPacket = new DatagramPacket(data, data.length, serverAddress, serverPort);
         
         byte[] buffer = new byte[1024]; 
@@ -46,7 +46,7 @@ public class ClientSocket {
                 socket.receive(receivePacket);
                 
                 // If successful, return the server's message as a String
-                return new String(receivePacket.getData(), 0, receivePacket.getLength(), StandardCharsets.UTF_8);
+                return receivePacket.getData();
                 
             } catch (SocketTimeoutException e) {
                 // This block handles lost Request or Reply packets

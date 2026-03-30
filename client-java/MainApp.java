@@ -132,7 +132,7 @@ public class MainApp {
                             }
                             accNum = (int) unsigned_accNum;
                         } catch (IllegalArgumentException e) {
-                            e.printStackTrace();
+                            // e.printStackTrace();
                             System.out.println("The account number you just typed in was not recognised. Please try again.");
                             break;
                         }
@@ -165,7 +165,7 @@ public class MainApp {
                             }
                             dAcc = (int) unsigned_dAcc;
                         } catch (IllegalArgumentException e) {
-                            e.printStackTrace();
+                            // e.printStackTrace();
                             System.out.println("The account number you just typed in was not recognised. Please try again.");
                             break;
                         }
@@ -234,8 +234,57 @@ public class MainApp {
                 
                 if (requestPayload != null) {
                     // Use the new sendAndReceive for At-Least-Once reliability
-                    String response = client.sendAndReceive(requestPayload);
-                    System.out.println("\n[SERVER RESPONSE]: " + response);
+                    byte[] response = client.sendAndReceive(requestPayload);
+                    ByteBuffer res_buf = ByteBuffer.wrap(response).order(ByteOrder.BIG_ENDIAN); // network order BIG_ENDIAN
+                    int opcode = res_buf.getInt(), accNum;
+                    float balance;
+
+                    byte[] reply_type = new byte[res_buf.getInt()];
+                    res_buf.get(reply_type);
+                    String reType = new String(reply_type, StandardCharsets.UTF_8).trim(), response_str = "";
+                    System.out.println("reType: " + reType);
+                    switch (opcode) {
+                        case Constants.OP_OPEN:
+                            if (reType.equals("SUCCESS")) {
+                                accNum = res_buf.getInt();
+                                response_str = "ACCOUNT CREATION SUCCESSFUL, account number: " + accNum;
+                            }
+                            break;
+                        case Constants.OP_CLOSE:
+                            if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                                byte[] cl_error = new byte[res_buf.getInt()];
+                                res_buf.get(cl_error);
+                                String cl_error_msg = new String(cl_error, StandardCharsets.UTF_8);
+                                response_str = "ACCOUNT CLOSURE ERROR: " + cl_error_msg;
+                            } else if (reType.equals("SUCCESS")) {
+                                byte[] cl_success = new byte[res_buf.getInt()];
+                                res_buf.get(cl_success);
+                                String cl_success_msg = new String(cl_success, StandardCharsets.UTF_8);
+                                response_str = "ACCOUNT CLOSURE SUCCESSFUL: " + cl_success_msg;
+                            }
+                            break;
+                        case Constants.OP_DEPOSIT:
+                        case Constants.OP_WITHDRAW:
+                            String prefix;
+                            if (reType.equals("SUCCESS")) {
+                                balance = res_buf.getFloat();
+                                prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT SUCCESSFUL" : "WITHDRAW SUCCESSFUL";
+                                response_str = String.format("%s, new balance: %.2f", prefix, balance);
+                            } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                                byte[] d_error = new byte[res_buf.getInt()];
+                                res_buf.get(d_error);
+                                String d_error_msg = new String(d_error, StandardCharsets.UTF_8);
+                                prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT ERROR: " : "WITHDRAW ERROR: ";
+                                response_str = prefix + d_error_msg;
+                            } else if (reType.equals("ERROR_INSUFFICIENT_BALANCE")) {
+                                byte[] w_error = new byte[res_buf.getInt()];
+                                res_buf.get(w_error);
+                                String w_error_msg = new String(w_error, StandardCharsets.UTF_8);
+                                response_str = "WITHDRAW ERROR: " + w_error_msg;
+                            }
+                            break;
+                    }
+                    System.out.println("\n[SERVER RESPONSE]: " + response_str);
                 }
             }
             client.close();

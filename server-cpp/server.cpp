@@ -30,8 +30,7 @@ struct BankAccount {
 
 struct ClientCallbackDetails {
     uint32_t id;
-    struct in_addr client_addr;
-    uint16_t client_port;
+    sockaddr_in client_sock;
     std::chrono::steady_clock::time_point expiry;
 
     // overload > operator
@@ -82,31 +81,45 @@ private:
 
 public:
     std::vector<uint8_t> openAccount(
+        int opcode,
         const std::string& name, 
         const std::string& pw, 
         Currency curr, 
         float balance, 
-        std::vector<ClientCallbackDetails>* clientsMonitoring
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
     ) {
         BankAccount acc = { nextAccountNumber++, name, pw, curr, balance };
         accountDatabase[acc.accountNumber] = acc;
         std::cout << "Created account " << acc.accountNumber << " for " << name << std::endl;
         std::printf("Unmarshalled details: name: %s, password: %s, currency: %d, balance: %.2f", name.c_str(), pw.c_str(), curr, balance);
 
-        // TODO: send information to 
-
         std::string reply_id = "SUCCESS";
         std::vector<uint8_t> buffer;
         int offset = 0;
-        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t)); // set string length to uint32_t
+        buffer.resize(sizeof(uint32_t)*3 + reply_id.length()); // set string length to uint32_t
+        marshallInt32(buffer.data(), opcode, &offset);
         marshallStrings(buffer.data(), reply_id, &offset);
-        std::cout << "offset: " << offset << std::endl;
         marshallInt32(buffer.data(), acc.accountNumber, &offset);
+
+        // send to monitoring clients
+        for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+            sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+            sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+        }
+
         return buffer;
         // return "Account Created: " + std::to_string(acc.accountNumber);
     }
 
-    std::vector<uint8_t> closeAccount(const std::string& name, int accNum, const std::string& pw) {
+    std::vector<uint8_t> closeAccount(
+        int opcode,
+        const std::string& name, 
+        int accNum, 
+        const std::string& pw, 
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
+    ) {
         std::string reply_id;
         std::vector<uint8_t> buffer;
         int offset;
@@ -116,8 +129,9 @@ public:
             std::string reply_msg = "Account " + std::to_string(accNum) + " closed successfully.";
 
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + reply_msg.length());
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + reply_msg.length());
             offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallStrings(buffer.data(), reply_msg, &offset);
             return buffer;
@@ -125,15 +139,23 @@ public:
         }
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         std::string error_msg = "Error: Invalid credentials or account not found.";
-        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
         offset = 0;
+        marshallInt32(buffer.data(), opcode, &offset);
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
         // return error_msg;
     }
 
-    std::vector<uint8_t> deposit(int accNum, const std::string& pw, float amount) {
+    std::vector<uint8_t> deposit(
+        int opcode,
+        int accNum, 
+        const std::string& pw, 
+        float amount, 
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
+    ) {
         std::string reply_id;
         std::vector<uint8_t> buffer;
         int offset;
@@ -141,8 +163,9 @@ public:
             accountDatabase[accNum].balance += amount;
             std::cout << "Deposited into account" << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t)); // 32 bits for float
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length()); // 32 bits for float
             offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
             return buffer;
@@ -151,14 +174,22 @@ public:
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         std::string error_msg = "Error: Invalid credentials";
         offset = 0;
-        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+        marshallInt32(buffer.data(), opcode, &offset);
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
         // return error_msg;
     }
 
-    std::vector<uint8_t> withdraw(int accNum, const std::string& pw, float amount) {
+    std::vector<uint8_t> withdraw(
+        int opcode,
+        int accNum, 
+        const std::string& pw, 
+        float amount, 
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
+    ) {
         std::string reply_id;
         std::vector<uint8_t> buffer;
         std::string error_msg;
@@ -167,8 +198,9 @@ public:
             if (accountDatabase[accNum].balance < amount) {
                 reply_id = "ERROR_INSUFFICIENT_BALANCE";
                 error_msg = "Error: Insufficient balance.";
-                buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+                buffer.resize(sizeof(uint32_t)*3 + reply_id.length() + error_msg.length());
                 offset = 0;
+                marshallInt32(buffer.data(), opcode, &offset);
                 marshallStrings(buffer.data(), reply_id, &offset);
                 marshallStrings(buffer.data(), error_msg, &offset);
                 return buffer;
@@ -177,8 +209,9 @@ public:
             accountDatabase[accNum].balance -= amount;
             std::cout << "Withdrew from account " << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t));
+            buffer.resize(sizeof(uint32_t)*3 + reply_id.length());
             offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
             return buffer;
@@ -186,8 +219,9 @@ public:
         }
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         error_msg = "Error: Invalid credentials";
-        buffer.resize(sizeof(uint32_t) + reply_id.length() + sizeof(uint32_t) + error_msg.length());
+        buffer.resize(sizeof(uint32_t)*3 + reply_id.length() + error_msg.length());
         offset = 0;
+        marshallInt32(buffer.data(), opcode, &offset);
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
@@ -252,7 +286,7 @@ public:
         client_added.notify_all();
         cleaner_thread.join();
     }
-    std::vector<uint8_t> processMessage(const char* buffer, sockaddr_in& client_socketAddr, BankService& bank) {
+    std::vector<uint8_t> processMessage(const char* buffer, const SOCKET sock, sockaddr_in client_socketAddr, BankService& bank) {
         int offset = 0;
         
         int opcode = readInt32(buffer, offset);
@@ -278,28 +312,28 @@ public:
                 std::string pw = readString(buffer, offset);
                 Currency curr = static_cast<Currency>(readInt32(buffer, offset));
                 float balance = readFloat(buffer, offset);
-                response = bank.openAccount(name, pw, curr, balance, &(clientsMonitoring.internal_vector_form()));
+                response = bank.openAccount(opcode, name, pw, curr, balance, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 2: { // Close Account
                 std::string name = readString(buffer, offset);
                 int accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
-                response = bank.closeAccount(name, accNum, pw);
+                response = bank.closeAccount(opcode, name, accNum, pw, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 3: { // Deposit
                 int accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
-                response = bank.deposit(accNum, pw, amount);
+                response = bank.deposit(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 4: { // Withdraw
                 int accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
-                response = bank.withdraw(accNum, pw, amount);
+                response = bank.withdraw(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 5: { // Monitor
@@ -307,9 +341,9 @@ public:
                 std::cout << "duration: " << duration << std::endl;
                 auto expiry = std::chrono::steady_clock::now() + std::chrono::nanoseconds(duration);
                 m.lock();
-                clientsMonitoring.push({clientId++, client_socketAddr.sin_addr, ntohs(client_socketAddr.sin_port), expiry});
+                clientsMonitoring.push({clientId++, client_socketAddr, expiry});
                 for (const auto& item : clientsMonitoring.internal_vector_form()) {
-                    std::cout << "Testing: " << item.id << ": " << item.client_port << std::endl;
+                    std::cout << "Testing: " << item.id << ": " << item.client_sock.sin_port << std::endl;
                 }
                 std::cout << "------" << std::endl;
                 m.unlock();
@@ -413,7 +447,7 @@ public:
             
             if (bytesReceived == SOCKET_ERROR) continue;
 
-            std::vector<uint8_t> response = parser.processMessage(buffer, client_socketAddr, bank);
+            std::vector<uint8_t> response = parser.processMessage(buffer, sock_des, client_socketAddr, bank);
             std::cout << std::endl << "size: " << response.size() << std::endl;
             for (size_t i = 0; i < response.size(); ++i) {
                 std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(response[i]) << " ";
