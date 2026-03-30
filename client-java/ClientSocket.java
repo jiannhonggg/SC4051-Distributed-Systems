@@ -12,7 +12,8 @@ public class ClientSocket {
     private static final int MAX_TRIES = 5;
 
     public ClientSocket(int port, String server_ip, int server_port) throws Exception {
-        this.socket = new DatagramSocket();
+        this.socket = new DatagramSocket(port);
+        // this.socket = new DatagramSocket();
         
         // 1. SET SERVER IP:
         // Using "127.0.0.1" for testing on own laptop.
