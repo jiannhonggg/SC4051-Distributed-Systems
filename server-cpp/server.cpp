@@ -7,7 +7,7 @@
 #include <string>
 #include <cstdint>
 #include <chrono>
-#include <format>
+
 #include <sstream>
 #include <regex>
 #include <thread>
@@ -78,6 +78,18 @@ class BankService {
 private:
     std::map<uint32_t, BankAccount> accountDatabase;
     uint32_t nextAccountNumber = 0;
+
+    // Exchange rate table: [from][to], indexed by (Currency - 1)
+    // Currencies: USD=1, JPY=2, SGD=3
+    // Row = source currency, Col = dest currency
+    const float exchangeRates[3][3] = {
+        // USD->USD  USD->JPY  USD->SGD
+        { 1.0f,     149.50f,  1.35f  },
+        // JPY->USD  JPY->JPY  JPY->SGD
+        { 0.0067f,  1.0f,     0.009f },
+        // SGD->USD  SGD->JPY  SGD->SGD
+        { 0.74f,    111.0f,   1.0f   }
+    };
 
 public:
     std::vector<uint8_t> openAccount(
@@ -248,6 +260,150 @@ public:
         return buffer;
         // return "Error: Invalid credentials.";
     }
+
+    std::vector<uint8_t> checkBalance(
+        int opcode,
+        int accNum,
+        const std::string& pw,
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
+    ) {
+        std::string reply_id;
+        std::vector<uint8_t> buffer;
+        int offset;
+        if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
+            std::cout << "Checked balance for account " << accNum << std::endl;
+            reply_id = "SUCCESS";
+            buffer.resize(sizeof(uint32_t) * 4 + reply_id.length()); // opcode + replyId + accNum + balance(float)
+            offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallInt32(buffer.data(), accNum, &offset);
+            marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+
+            // Notify monitoring clients
+            for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+                sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+                sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+            }
+
+            return buffer;
+        }
+        reply_id = "ERROR_ACCOUNT_NOT_FOUND";
+        std::string error_msg = "Error: Invalid credentials";
+        offset = 0;
+        buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+        marshallInt32(buffer.data(), opcode, &offset);
+        marshallStrings(buffer.data(), reply_id, &offset);
+        marshallStrings(buffer.data(), error_msg, &offset);
+        return buffer;
+    }
+
+    std::vector<uint8_t> transferFunds(
+        int opcode,
+        int srcAccNum,
+        const std::string& pw,
+        int dstAccNum,
+        float amount,
+        std::vector<ClientCallbackDetails>* clientsMonitoring,
+        const SOCKET sock
+    ) {
+        std::string reply_id;
+        std::vector<uint8_t> buffer;
+        int offset;
+        std::string error_msg;
+
+        // Validate source account
+        if (!accountDatabase.count(srcAccNum) || accountDatabase[srcAccNum].password != pw) {
+            reply_id = "ERROR_ACCOUNT_NOT_FOUND";
+            error_msg = "Error: Source account not found or invalid credentials.";
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+            offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallStrings(buffer.data(), error_msg, &offset);
+            return buffer;
+        }
+
+        // Validate destination account
+        if (!accountDatabase.count(dstAccNum)) {
+            reply_id = "ERROR_DEST_NOT_FOUND";
+            error_msg = "Error: Destination account not found.";
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+            offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallStrings(buffer.data(), error_msg, &offset);
+            return buffer;
+        }
+
+        // Check same account
+        if (srcAccNum == dstAccNum) {
+            reply_id = "ERROR_SAME_ACCOUNT";
+            error_msg = "Error: Source and destination accounts are the same.";
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+            offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallStrings(buffer.data(), error_msg, &offset);
+            return buffer;
+        }
+
+        // Check sufficient balance
+        if (accountDatabase[srcAccNum].balance < amount) {
+            reply_id = "ERROR_INSUFFICIENT_BALANCE";
+            error_msg = "Error: Insufficient balance in source account.";
+            buffer.resize(sizeof(uint32_t) * 3 + reply_id.length() + error_msg.length());
+            offset = 0;
+            marshallInt32(buffer.data(), opcode, &offset);
+            marshallStrings(buffer.data(), reply_id, &offset);
+            marshallStrings(buffer.data(), error_msg, &offset);
+            return buffer;
+        }
+
+        // Apply exchange rate
+        int srcCurrIdx = static_cast<int>(accountDatabase[srcAccNum].currency) - 1;
+        int dstCurrIdx = static_cast<int>(accountDatabase[dstAccNum].currency) - 1;
+        float rate = exchangeRates[srcCurrIdx][dstCurrIdx];
+        float dstAmount = amount * rate;
+
+        // Execute transfer
+        accountDatabase[srcAccNum].balance -= amount;
+        accountDatabase[dstAccNum].balance += dstAmount;
+
+        float newSrcBalance = accountDatabase[srcAccNum].balance;
+        float newDstBalance = accountDatabase[dstAccNum].balance;
+
+        std::cout << "Transfer: " << amount << " from account " << srcAccNum
+                  << " -> " << dstAmount << " to account " << dstAccNum
+                  << " (rate: " << rate << ")" << std::endl;
+
+        // Build success response:
+        // opcode(4) + SUCCESS(4+7) + srcAcc(4) + dstAcc(4) + srcAmt(4) + dstAmt(4)
+        // + newSrcBal(4) + newDstBal(4) + rate(4) + srcCurrency(4) + dstCurrency(4) = 51 bytes
+        reply_id = "SUCCESS";
+        buffer.resize(sizeof(uint32_t) * 11 + reply_id.length()); // 44 + 7 = 51 bytes
+        offset = 0;
+        marshallInt32(buffer.data(), opcode, &offset);
+        marshallStrings(buffer.data(), reply_id, &offset);
+        marshallInt32(buffer.data(), srcAccNum, &offset);
+        marshallInt32(buffer.data(), dstAccNum, &offset);
+        marshallFloat32(buffer.data(), amount, &offset);
+        marshallFloat32(buffer.data(), dstAmount, &offset);
+        marshallFloat32(buffer.data(), newSrcBalance, &offset);
+        marshallFloat32(buffer.data(), newDstBalance, &offset);
+        marshallFloat32(buffer.data(), rate, &offset);
+        marshallInt32(buffer.data(), static_cast<int>(accountDatabase[srcAccNum].currency), &offset);
+        marshallInt32(buffer.data(), static_cast<int>(accountDatabase[dstAccNum].currency), &offset);
+
+        // Notify monitoring clients
+        for (size_t i = 0; i < clientsMonitoring->size(); i++) {
+            sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
+            sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
+        }
+
+        return buffer;
+    }
 };
 
 // ==========================================
@@ -376,6 +532,20 @@ public:
                 marshallInt32(response.data(), opcode, &offset);
                 marshallStrings(response.data(), reply_id, &offset);
                 marshallStrings(response.data(), reply_msg, &offset);
+                break;
+            }
+            case 6: { // Check Balance (Idempotent)
+                int accNum = readInt32(buffer, offset);
+                std::string pw = readString(buffer, offset);
+                response = bank.checkBalance(opcode, accNum, pw, &(clientsMonitoring.internal_vector_form()), sock);
+                break;
+            }
+            case 7: { // Transfer Funds (Non-Idempotent)
+                int srcAccNum = readInt32(buffer, offset);
+                std::string pw = readString(buffer, offset);
+                int dstAccNum = readInt32(buffer, offset);
+                float amount = readFloat(buffer, offset);
+                response = bank.transferFunds(opcode, srcAccNum, pw, dstAccNum, amount, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             default:

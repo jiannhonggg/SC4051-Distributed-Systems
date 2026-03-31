@@ -13,7 +13,7 @@ public class MainApp {
             String options = String.join(" ", args);
             Pattern p = Pattern.compile("\\b--(\\w+)=([\\d.]+)\\b");
             Matcher m = p.matcher(options);
-            int client_port = 8000, server_port = 8080;
+            int client_port = 0, server_port = 8080;
             String server_ip = "127.0.0.1";
             while (m.find()) {
                 String key = m.group(1);
@@ -72,6 +72,8 @@ public class MainApp {
                 System.out.println("3. Deposit");
                 System.out.println("4. Withdraw");
                 System.out.println("5. Monitor");
+                System.out.println("6. Check Balance"); // Idempotent
+                System.out.println("7. Transfer Funds"); // Non-Idempotent
                 System.out.println("q. Quit");
 
                 System.out.print("Choice: ");
@@ -85,13 +87,18 @@ public class MainApp {
                     case "1": // Open Account: Op(4) + ReqID(4) + NameLen(4) + Name(n) + PwLen(4) + Pw(m) + Curr(4) + Bal(4)
                         System.out.print("Name: "); String name = sc.nextLine();
                         System.out.print("Password: "); String pw = sc.nextLine();
-                        System.out.print("Currency (USD, JPY, or SGD): "); Currency curr;
-                        try {
-                            curr = Currency.valueOf(sc.nextLine()); //TODO
-                        } catch (IllegalArgumentException e) {
-                            System.out.println("The currency you just typed in was not recognised. Please try again");
-                            break;
+
+                        Currency curr = null;
+                        while (curr == null) {
+                            System.out.print("Currency (USD, JPY, or SGD): ");
+                            String currInput = sc.nextLine().trim().toUpperCase();
+                            try {
+                                curr = Currency.valueOf(currInput);
+                            } catch (IllegalArgumentException e) {
+                                System.out.println("Invalid currency '" + currInput + "'. Please enter USD, JPY, or SGD.");
+                            }
                         }
+
                         System.out.print("Initial Balance: "); float bal;
                         try {
                             bal = Float.parseFloat(sc.nextLine());
@@ -99,10 +106,11 @@ public class MainApp {
                                 System.out.println("Negative account balance is impossible");
                                 break;
                             }
-                        } catch (IllegalArgumentException e) {
+                        } catch (NumberFormatException e) {
                             System.out.println("The balance you just typed in was not recognised. Please try again");
                             break;
                         }
+
                         
 
                         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
@@ -230,6 +238,84 @@ public class MainApp {
                         regBuff.putLong(d.toNanos());
                         requestPayload = regBuff.array();
                         break;
+
+                    case "6": // Check Balance: Op(4) + ReqID(4) + AccNum(4) + PwLen(4) + Pw(n)
+                        System.out.print("Account Number: "); int bAcc;
+                        try {
+                            long unsigned_bAcc = Long.parseLong(sc.nextLine());
+                            if ((unsigned_bAcc & 0x7fffffff00000000L) > 0 || unsigned_bAcc < 0) {
+                                System.out.println("The account number you just typed in exceeded maximum bounds. Please try again.");
+                                break;
+                            }
+                            bAcc = (int) unsigned_bAcc;
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("The account number you just typed in was not recognised. Please try again.");
+                            break;
+                        }
+                        System.out.print("Password: "); String bPw = sc.nextLine();
+
+                        byte[] bPwBytes = bPw.getBytes(StandardCharsets.UTF_8);
+
+                        ByteBuffer chkBuf = ByteBuffer.allocate(16 + bPwBytes.length);
+                        chkBuf.order(ByteOrder.BIG_ENDIAN);
+                        chkBuf.putInt(Constants.OP_CHECK_BALANCE);
+                        chkBuf.putInt(++requestId);
+                        chkBuf.putInt(bAcc);
+                        chkBuf.putInt(bPwBytes.length);
+                        chkBuf.put(bPwBytes);
+                        requestPayload = chkBuf.array();
+                        break;
+
+                    case "7": // Transfer Funds: Op(4) + ReqID(4) + SrcAcc(4) + PwLen(4) + Pw(n) + DstAcc(4) + Amount(4)
+                        System.out.print("Source Account Number: "); int tSrcAcc;
+                        try {
+                            long unsigned_tSrcAcc = Long.parseLong(sc.nextLine());
+                            if ((unsigned_tSrcAcc & 0x7fffffff00000000L) > 0 || unsigned_tSrcAcc < 0) {
+                                System.out.println("The account number exceeded maximum bounds. Please try again.");
+                                break;
+                            }
+                            tSrcAcc = (int) unsigned_tSrcAcc;
+                        } catch (NumberFormatException e) {
+                            System.out.println("The account number was not recognised. Please try again.");
+                            break;
+                        }
+                        System.out.print("Password: "); String tPw = sc.nextLine();
+                        System.out.print("Destination Account Number: "); int tDstAcc;
+                        try {
+                            long unsigned_tDstAcc = Long.parseLong(sc.nextLine());
+                            if ((unsigned_tDstAcc & 0x7fffffff00000000L) > 0 || unsigned_tDstAcc < 0) {
+                                System.out.println("The account number exceeded maximum bounds. Please try again.");
+                                break;
+                            }
+                            tDstAcc = (int) unsigned_tDstAcc;
+                        } catch (NumberFormatException e) {
+                            System.out.println("The account number was not recognised. Please try again.");
+                            break;
+                        }
+                        System.out.print("Amount to Transfer: "); float tAmt;
+                        try {
+                            tAmt = Float.parseFloat(sc.nextLine());
+                            if (tAmt <= 0) {
+                                System.out.println("Amount must be positive. Please try again.");
+                                break;
+                            }
+                        } catch (NumberFormatException e) {
+                            System.out.println("The amount was not recognised. Please try again.");
+                            break;
+                        }
+
+                        byte[] tPwBytes = tPw.getBytes(StandardCharsets.UTF_8);
+                        ByteBuffer transferBuf = ByteBuffer.allocate(24 + tPwBytes.length);
+                        transferBuf.order(ByteOrder.BIG_ENDIAN);
+                        transferBuf.putInt(Constants.OP_TRANSFER);
+                        transferBuf.putInt(++requestId);
+                        transferBuf.putInt(tSrcAcc);
+                        transferBuf.putInt(tPwBytes.length);
+                        transferBuf.put(tPwBytes);
+                        transferBuf.putInt(tDstAcc);
+                        transferBuf.putFloat(tAmt);
+                        requestPayload = transferBuf.array();
+                        break;
                 }
                 
                 if (requestPayload != null) {
@@ -241,7 +327,7 @@ public class MainApp {
 
                     ByteBuffer res_buf = ByteBuffer.wrap(response).order(ByteOrder.BIG_ENDIAN); // network order BIG_ENDIAN
                     int opcode = res_buf.getInt();
-                    String response_str = presentData(res_buf, opcode);
+                    String response_str = presentData(res_buf, opcode, false);
                     
                     System.out.println("\n[SERVER RESPONSE]: " + response_str);
                     if (opcode == Constants.OP_MONITOR) {
@@ -254,7 +340,7 @@ public class MainApp {
                             int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, Duration.ofNanos(end_time - System.nanoTime()).toMillis()));
                             client.set_timeout(timeout);
                             ByteBuffer data_buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
-                            response_str = presentData(data_buf, data_buf.getInt());
+                            response_str = presentData(data_buf, data_buf.getInt(), true);
                             System.out.println("\n[MONITOR UPDATE]: " + response_str);
                         }
                     }
@@ -271,7 +357,7 @@ public class MainApp {
         }
     }
 
-    private static String presentData(ByteBuffer res_buf, int opcode) {
+    private static String presentData(ByteBuffer res_buf, int opcode, boolean isMonitor) {
         int accNum;
         float balance, amount;
 
@@ -326,6 +412,58 @@ public class MainApp {
                 res_buf.get(ack);
                 String ack_msg = new String(ack, StandardCharsets.UTF_8);
                 response_str = "ACK: " + ack_msg;
+                break;
+            case Constants.OP_CHECK_BALANCE:
+                if (reType.equals("SUCCESS")) {
+                    accNum = res_buf.getInt();
+                    balance = res_buf.getFloat();
+                    response_str = String.format("CHECK BALANCE SUCCESSFUL: Account %d has a balance of %.2f", accNum, balance);
+                } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                    byte[] cb_error = new byte[res_buf.getInt()];
+                    res_buf.get(cb_error);
+                    String cb_error_msg = new String(cb_error, StandardCharsets.UTF_8);
+                    response_str = "CHECK BALANCE ERROR: " + cb_error_msg;
+                }
+                break;
+            case Constants.OP_TRANSFER:
+                if (reType.equals("SUCCESS")) {
+                    int srcAcc = res_buf.getInt();
+                    int dstAcc = res_buf.getInt();
+                    float srcAmt = res_buf.getFloat();
+                    float dstAmt = res_buf.getFloat();
+                    float newSrcBal = res_buf.getFloat();
+                    float newDstBal = res_buf.getFloat();
+                    float rate = res_buf.getFloat();
+                    String[] currNames = {"USD", "JPY", "SGD"};
+                    String srcCurr = currNames[res_buf.getInt() - 1];
+                    String dstCurr = currNames[res_buf.getInt() - 1];
+                    if (isMonitor) {
+                        response_str = String.format(
+                            "TRANSFER: Account %d sent %.2f %s -> Account %d received %.2f %s" +
+                            " (1 %s = %.4f %s) | Account %d balance: %.2f %s, Account %d balance: %.2f %s",
+                            srcAcc, srcAmt, srcCurr, dstAcc, dstAmt, dstCurr,
+                            srcCurr, rate, dstCurr,
+                            srcAcc, newSrcBal, srcCurr, dstAcc, newDstBal, dstCurr);
+                    } else {
+                        response_str = String.format(
+                            "TRANSFER SUCCESSFUL: Sent %.2f %s from Account %d (new balance: %.2f %s)" +
+                            " -> Credited %.2f %s to Account %d (new balance: %.2f %s)",
+                            srcAmt, srcCurr, srcAcc, newSrcBal, srcCurr,
+                            dstAmt, dstCurr, dstAcc, newDstBal, dstCurr);
+                    }
+                } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
+                    byte[] t_err = new byte[res_buf.getInt()]; res_buf.get(t_err);
+                    response_str = "TRANSFER ERROR: " + new String(t_err, StandardCharsets.UTF_8);
+                } else if (reType.equals("ERROR_DEST_NOT_FOUND")) {
+                    byte[] t_err = new byte[res_buf.getInt()]; res_buf.get(t_err);
+                    response_str = "TRANSFER ERROR: " + new String(t_err, StandardCharsets.UTF_8);
+                } else if (reType.equals("ERROR_SAME_ACCOUNT")) {
+                    byte[] t_err = new byte[res_buf.getInt()]; res_buf.get(t_err);
+                    response_str = "TRANSFER ERROR: " + new String(t_err, StandardCharsets.UTF_8);
+                } else if (reType.equals("ERROR_INSUFFICIENT_BALANCE")) {
+                    byte[] t_err = new byte[res_buf.getInt()]; res_buf.get(t_err);
+                    response_str = "TRANSFER ERROR: " + new String(t_err, StandardCharsets.UTF_8);
+                }
                 break;
         }
 
