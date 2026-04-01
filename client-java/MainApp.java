@@ -178,7 +178,18 @@ public class MainApp {
                             System.out.println("The account number you just typed in was not recognised. Please try again.");
                             break;
                         }
+                        System.out.print("Name: "); String dName = sc.nextLine();
                         System.out.print("Password: "); String dPw = sc.nextLine();
+                        Currency dw_curr = null;
+                        while (dw_curr == null) {
+                            System.out.print("Currency (USD, JPY, or SGD): ");
+                            String dw_curr_str = sc.nextLine().trim().toUpperCase();
+                            try {
+                                dw_curr = Currency.valueOf(dw_curr_str);
+                            } catch (IllegalArgumentException e) {
+                                System.out.println("Invalid currency '" + dw_curr_str + "'. Please enter USD, JPY, or SGD.");
+                            }
+                        }
                         System.out.print("Amount: "); float amt;
                         try {
                             amt = Float.parseFloat(sc.nextLine());
@@ -191,16 +202,20 @@ public class MainApp {
                             break;
                         }
 
+                        byte[] dNameBytes = dName.getBytes(StandardCharsets.UTF_8);
                         byte[] dPwBytes = dPw.getBytes(StandardCharsets.UTF_8);
 
-                        ByteBuffer transBuf = ByteBuffer.allocate(20 + dPwBytes.length);
+                        ByteBuffer transBuf = ByteBuffer.allocate(28 + dPwBytes.length + dNameBytes.length);
                         transBuf.order(ByteOrder.BIG_ENDIAN);
                         transBuf.putInt(opCode);
                         transBuf.putInt(++requestId);
                         transBuf.putInt(dAcc);
+                        transBuf.putInt(dNameBytes.length);
+                        transBuf.put(dNameBytes);
                         transBuf.putInt(dPwBytes.length);
                         transBuf.put(dPwBytes);
                         transBuf.putFloat(amt);
+                        transBuf.putInt(dw_curr.getCurrencyNumber());
                         requestPayload = transBuf.array();
                         break;
                     case "5":
@@ -390,10 +405,12 @@ public class MainApp {
                 if (reType.equals("SUCCESS")) {
                     accNum = res_buf.getInt() & 0xffffffL;
                     amount = res_buf.getFloat();
+                    Currency amount_curr = Currency.fromInt(res_buf.getInt());
                     balance = res_buf.getFloat();
+                    Currency balance_curr = Currency.fromInt(res_buf.getInt());
                     prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT SUCCESSFUL" : "WITHDRAW SUCCESSFUL";
                     action = (opcode == Constants.OP_DEPOSIT) ? "Deposited" : "Withdrawn";
-                    response_str = String.format("%s: %s %.2f into account %d, new balance: %.2f", prefix, action, amount, accNum, balance);
+                    response_str = String.format("%s: %s %.2f %s into account %d, new balance: %.2f %s", prefix, action, amount, amount_curr.name(), accNum, balance, balance_curr.name());
                 } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
                     byte[] d_error = new byte[res_buf.getInt()];
                     res_buf.get(d_error);

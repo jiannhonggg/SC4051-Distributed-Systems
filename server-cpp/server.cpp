@@ -19,6 +19,11 @@
 #pragma comment(lib, "ws2_32.lib") 
 
 enum Currency: uint32_t { USD = 1, JPY = 2, SGD = 3 };
+std::map <Currency, std::string> CurrToStr = {
+    {Currency::USD, "USD"},
+    {Currency::JPY, "JPY"},
+    {Currency::SGD, "SGD"}
+};
 
 struct BankAccount {
     uint32_t accountNumber;
@@ -168,25 +173,33 @@ public:
     std::vector<uint8_t> deposit(
         int opcode,
         uint32_t accNum, 
+        const std::string& name,
         const std::string& pw, 
         float amount, 
+        Currency curr,
         std::vector<ClientCallbackDetails>* clientsMonitoring,
         const SOCKET sock
     ) {
         std::string reply_id;
         std::vector<uint8_t> buffer;
         int offset;
-        if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
-            accountDatabase[accNum].balance += amount;
-            std::cout << "Deposited into account" << accNum << "an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
+        if (accountDatabase.count(accNum) && accountDatabase[accNum].name == name && accountDatabase[accNum].password == pw) {
+            int base_curr_index = static_cast<int>(accountDatabase[accNum].currency) - 1;
+            int amount_curr_index = static_cast<int>(curr) - 1;
+            float rate = exchangeRates[amount_curr_index][base_curr_index]; // convert potentially foreign currency to local currency
+            accountDatabase[accNum].balance += amount * rate;
+            std::cout << "Deposited into account " << accNum << "an amount of " << amount << CurrToStr.at(curr) << " | New Balance: " << accountDatabase[accNum].balance << CurrToStr.at(accountDatabase[accNum].currency) << std::endl;
+            
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t) * 5 + reply_id.length()); // 32 bits for float
+            buffer.resize(sizeof(uint32_t) * 7 + reply_id.length()); // 32 bits for float
             offset = 0;
             marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallInt32(buffer.data(), accNum, &offset);
             marshallFloat32(buffer.data(), amount, &offset);
+            marshallInt32(buffer.data(), static_cast<uint32_t>(curr), &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+            marshallInt32(buffer.data(), static_cast<uint32_t>(accountDatabase[accNum].currency), &offset);
 
             for (size_t i = 0; i < clientsMonitoring->size(); i++) {
                 sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
@@ -210,8 +223,10 @@ public:
     std::vector<uint8_t> withdraw(
         int opcode,
         uint32_t accNum, 
+        const std::string& name,
         const std::string& pw, 
         float amount, 
+        Currency curr,
         std::vector<ClientCallbackDetails>* clientsMonitoring,
         const SOCKET sock
     ) {
@@ -219,8 +234,12 @@ public:
         std::vector<uint8_t> buffer;
         std::string error_msg;
         int offset;
-        if (accountDatabase.count(accNum) && accountDatabase[accNum].password == pw) {
-            if (accountDatabase[accNum].balance < amount) {
+        if (accountDatabase.count(accNum) && accountDatabase[accNum].name == name && accountDatabase[accNum].password == pw) {
+            int balance_curr_index = static_cast<int>(accountDatabase[accNum].currency) - 1;
+            int withdraw_curr_index = static_cast<int>(curr) - 1;
+            float rate = exchangeRates[withdraw_curr_index][balance_curr_index];
+
+            if (accountDatabase[accNum].balance < amount * rate) {
                 reply_id = "ERROR_INSUFFICIENT_BALANCE";
                 error_msg = "Error: Insufficient balance.";
                 buffer.resize(sizeof(uint32_t)*3 + reply_id.length() + error_msg.length());
@@ -231,16 +250,18 @@ public:
                 return buffer;
                 // return "Error: Insufficient balance.";
             }
-            accountDatabase[accNum].balance -= amount;
-            std::cout << "Withdrew from account " << accNum << " an amount of " << amount << " | New Balance: " << accountDatabase[accNum].balance << std::endl;
+            accountDatabase[accNum].balance -= amount * rate;
+            std::cout << "Withdrew from account " << accNum << " an amount of " << amount << CurrToStr.at(curr) << " | New Balance: " << accountDatabase[accNum].balance << CurrToStr.at(accountDatabase[accNum].currency) << std::endl;
             reply_id = "SUCCESS";
-            buffer.resize(sizeof(uint32_t)*5 + reply_id.length());
+            buffer.resize(sizeof(uint32_t)*7 + reply_id.length());
             offset = 0;
             marshallInt32(buffer.data(), opcode, &offset);
             marshallStrings(buffer.data(), reply_id, &offset);
             marshallInt32(buffer.data(), accNum, &offset);
             marshallFloat32(buffer.data(), amount, &offset);
+            marshallInt32(buffer.data(), static_cast<uint32_t>(curr), &offset);
             marshallFloat32(buffer.data(), accountDatabase[accNum].balance, &offset);
+            marshallInt32(buffer.data(), static_cast<uint32_t>(accountDatabase[accNum].currency), &offset);
 
             for (size_t i = 0; i < clientsMonitoring->size(); i++) {
                 sockaddr_in client_sock = (*clientsMonitoring)[i].client_sock;
@@ -501,16 +522,20 @@ public:
             }
             case 3: { // Deposit
                 uint32_t accNum = readInt32(buffer, offset);
+                std::string name = readString(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
-                response = bank.deposit(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
+                Currency cur = static_cast<Currency>(readInt32(buffer, offset));
+                response = bank.deposit(opcode, accNum, name, pw, amount, cur, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 4: { // Withdraw
                 uint32_t accNum = readInt32(buffer, offset);
+                std::string name = readString(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
-                response = bank.withdraw(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
+                Currency cur = static_cast<Currency>(readInt32(buffer, offset));
+                response = bank.withdraw(opcode, accNum, name, pw, amount, cur, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 5: { // Monitor

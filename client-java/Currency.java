@@ -10,4 +10,11 @@ public enum Currency {
     public int getCurrencyNumber() {
         return this.curr_const;
     }
+
+    public static Currency fromInt(int x) {
+        for (Currency c: Currency.values())
+            if (c.curr_const == x)
+                return c;
+        return null;
+    }
 }
