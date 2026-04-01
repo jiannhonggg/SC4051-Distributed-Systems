@@ -358,7 +358,7 @@ public class MainApp {
     }
 
     private static String presentData(ByteBuffer res_buf, int opcode, boolean isMonitor) {
-        int accNum;
+        long accNum;
         float balance, amount;
 
         byte[] reply_type = new byte[res_buf.getInt()];
@@ -367,7 +367,7 @@ public class MainApp {
         switch (opcode) {
             case Constants.OP_OPEN:
                 if (reType.equals("SUCCESS")) {
-                    accNum = res_buf.getInt();
+                    accNum = res_buf.getInt() & 0xffffffffL; // treat as unsigned int
                     response_str = "ACCOUNT CREATION SUCCESSFUL, account number: " + accNum;
                 }
                 break;
@@ -388,7 +388,7 @@ public class MainApp {
             case Constants.OP_WITHDRAW:
                 String prefix, action;
                 if (reType.equals("SUCCESS")) {
-                    accNum = res_buf.getInt();
+                    accNum = res_buf.getInt() & 0xffffffL;
                     amount = res_buf.getFloat();
                     balance = res_buf.getFloat();
                     prefix = (opcode == Constants.OP_DEPOSIT) ? "DEPOSIT SUCCESSFUL" : "WITHDRAW SUCCESSFUL";
@@ -415,7 +415,7 @@ public class MainApp {
                 break;
             case Constants.OP_CHECK_BALANCE:
                 if (reType.equals("SUCCESS")) {
-                    accNum = res_buf.getInt();
+                    accNum = res_buf.getInt() & 0xffffffffL;
                     balance = res_buf.getFloat();
                     response_str = String.format("CHECK BALANCE SUCCESSFUL: Account %d has a balance of %.2f", accNum, balance);
                 } else if (reType.equals("ERROR_ACCOUNT_NOT_FOUND")) {
@@ -427,8 +427,8 @@ public class MainApp {
                 break;
             case Constants.OP_TRANSFER:
                 if (reType.equals("SUCCESS")) {
-                    int srcAcc = res_buf.getInt();
-                    int dstAcc = res_buf.getInt();
+                    long srcAcc = res_buf.getInt() & 0xffffffffL;
+                    long dstAcc = res_buf.getInt() & 0xffffffffL;
                     float srcAmt = res_buf.getFloat();
                     float dstAmt = res_buf.getFloat();
                     float newSrcBal = res_buf.getFloat();
@@ -465,6 +465,9 @@ public class MainApp {
                     response_str = "TRANSFER ERROR: " + new String(t_err, StandardCharsets.UTF_8);
                 }
                 break;
+            default:
+                byte[] gen_err = new byte[res_buf.getInt()]; res_buf.get(gen_err);
+                response_str = "ERROR: " + new String(gen_err, StandardCharsets.UTF_8);
         }
 
         return response_str;

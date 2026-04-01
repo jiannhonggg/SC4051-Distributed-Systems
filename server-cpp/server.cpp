@@ -127,7 +127,7 @@ public:
     std::vector<uint8_t> closeAccount(
         int opcode,
         const std::string& name, 
-        int accNum, 
+        uint32_t accNum, 
         const std::string& pw, 
         std::vector<ClientCallbackDetails>* clientsMonitoring,
         const SOCKET sock
@@ -167,7 +167,7 @@ public:
 
     std::vector<uint8_t> deposit(
         int opcode,
-        int accNum, 
+        uint32_t accNum, 
         const std::string& pw, 
         float amount, 
         std::vector<ClientCallbackDetails>* clientsMonitoring,
@@ -209,7 +209,7 @@ public:
 
     std::vector<uint8_t> withdraw(
         int opcode,
-        int accNum, 
+        uint32_t accNum, 
         const std::string& pw, 
         float amount, 
         std::vector<ClientCallbackDetails>* clientsMonitoring,
@@ -263,7 +263,7 @@ public:
 
     std::vector<uint8_t> checkBalance(
         int opcode,
-        int accNum,
+        uint32_t accNum,
         const std::string& pw,
         std::vector<ClientCallbackDetails>* clientsMonitoring,
         const SOCKET sock
@@ -301,9 +301,9 @@ public:
 
     std::vector<uint8_t> transferFunds(
         int opcode,
-        int srcAccNum,
+        uint32_t srcAccNum,
         const std::string& pw,
-        int dstAccNum,
+        uint32_t dstAccNum,
         float amount,
         std::vector<ClientCallbackDetails>* clientsMonitoring,
         const SOCKET sock
@@ -494,20 +494,20 @@ public:
             }
             case 2: { // Close Account
                 std::string name = readString(buffer, offset);
-                int accNum = readInt32(buffer, offset);
+                uint32_t accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 response = bank.closeAccount(opcode, name, accNum, pw, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 3: { // Deposit
-                int accNum = readInt32(buffer, offset);
+                uint32_t accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
                 response = bank.deposit(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 4: { // Withdraw
-                int accNum = readInt32(buffer, offset);
+                uint32_t accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 float amount = readFloat(buffer, offset);
                 response = bank.withdraw(opcode, accNum, pw, amount, &(clientsMonitoring.internal_vector_form()), sock);
@@ -535,15 +535,15 @@ public:
                 break;
             }
             case 6: { // Check Balance (Idempotent)
-                int accNum = readInt32(buffer, offset);
+                uint32_t accNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
                 response = bank.checkBalance(opcode, accNum, pw, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
             }
             case 7: { // Transfer Funds (Non-Idempotent)
-                int srcAccNum = readInt32(buffer, offset);
+                uint32_t srcAccNum = readInt32(buffer, offset);
                 std::string pw = readString(buffer, offset);
-                int dstAccNum = readInt32(buffer, offset);
+                uint32_t dstAccNum = readInt32(buffer, offset);
                 float amount = readFloat(buffer, offset);
                 response = bank.transferFunds(opcode, srcAccNum, pw, dstAccNum, amount, &(clientsMonitoring.internal_vector_form()), sock);
                 break;
