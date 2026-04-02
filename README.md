@@ -18,7 +18,8 @@ server.exe alo
 - `amo` = At-Most-Once semantics (duplicate requests are filtered)
 - `alo` = At-Least-Once semantics (duplicate requests may re-execute)
 - Optional: `--server_port=<port>` (default: 8080)
-
+- Optional: `--drop_request=<float>` (default: 0.0). Range [0.0 - 1.0]. Simulates dropping an incoming request packet.
+- Optional: `--drop_reply=<float>` (default: 0.0). Range [0.0 - 1.0]. Simulates dropping an outgoing reply packet before it reaches the client.
 ---
 
 ### Client (Java)
@@ -72,7 +73,7 @@ java MainApp --server_ip=10.96.x.x --server_port=8080 --client_port=8082   <- Cl
 4. Withdraw
 5. Monitor Account (Callback)
 6. Check Balance (Idempotent)
+7. Failure Simulation
 
 ### To Do
 1. Transfer Funds (Non-Idempotent)
-2. Failure Simulation
