@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <queue>
 #include <iomanip>
+#include <random>
 
 #pragma comment(lib, "ws2_32.lib") 
 
@@ -654,16 +655,25 @@ public:
         WSACleanup(); 
     }
 
-    void start(BankService& bank, MessageParser& parser) {
+    void start(BankService& bank, MessageParser& parser, float drop_request, float drop_reply) {
         char buffer[1024]{}; 
         sockaddr_in client_socketAddr{};
         int len_client_socketAddr = sizeof(client_socketAddr); 
         
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<> dis(0.0, 1.0);
+
         while (true) {
             memset(buffer, 0, SIZE);
             int bytesReceived = recvfrom(sock_des, buffer, SIZE, 0, (struct sockaddr*)&client_socketAddr, &len_client_socketAddr);
             
             if (bytesReceived == SOCKET_ERROR) continue;
+
+            if (drop_request > 0.0 && dis(gen) < drop_request) {
+                std::cout << "[SIMULATION] Dropped incoming request from client." << std::endl;
+                continue;
+            }
 
             std::vector<uint8_t> response = parser.processMessage(buffer, sock_des, client_socketAddr, bank);
             std::cout << std::endl << "size: " << response.size() << std::endl;
@@ -671,6 +681,11 @@ public:
                 std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(response[i]) << " ";
             }
             std::cout << std::dec << std::endl;
+
+            if (drop_reply > 0.0 && dis(gen) < drop_reply) {
+                std::cout << "[SIMULATION] Dropped outgoing reply to client." << std::endl;
+                continue;
+            }
 
             sendto(sock_des, reinterpret_cast<const char*>(response.data()), response.size(), 0, (struct sockaddr*)&client_socketAddr, sizeof(client_socketAddr));
         }
@@ -704,11 +719,25 @@ int main(int argc, char* argv[]) {
         port = stoi(m[1].str());
     }
 
+    std::regex r_drop_req(R"(--drop_request=([0-9]*\.?[0-9]+))");
+    float drop_request = 0.0f;
+    if (std::regex_search(options, m, r_drop_req)) {
+        drop_request = stof(m[1].str());
+    }
+
+    std::regex r_drop_rep(R"(--drop_reply=([0-9]*\.?[0-9]+))");
+    float drop_reply = 0.0f;
+    if (std::regex_search(options, m, r_drop_rep)) {
+        drop_reply = stof(m[1].str());
+    }
+
     BankService bank;
     MessageParser parser(semantics);
     UDPServer server(port);
 
-    server.start(bank, parser);
+    std::cout << "Starting Server with semantics: " << semantics 
+              << ", drop_request: " << drop_request << ", drop_reply: " << drop_reply << std::endl;
+    server.start(bank, parser, drop_request, drop_reply);
 
     return 0;
 }
