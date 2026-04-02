@@ -1,3 +1,4 @@
+// This class stores the opcodes for each requested service
 public class Constants {
     public static final int OP_OPEN = 1;
     public static final int OP_CLOSE = 2;

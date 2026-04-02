@@ -45,6 +45,9 @@ struct ClientCallbackDetails {
     }
 };
 
+// ==============================================================================================
+// Utility functions for marshalling strings, integers (signed and unsigned), and floats
+// ==============================================================================================
 void marshallStrings(uint8_t* p, std::string s, int* offset) {
     // have to cast size_t to a fixed size. Limit to 32 bits
     uint32_t s_len = htonl(static_cast<uint32_t>(s.length()));
@@ -66,9 +69,9 @@ void marshallFloat32(uint8_t *p, float f, int* offset) {
     marshallInt32(p, f_tmp, offset);
 }
 
-// ==========================================
-// IterablePriorityQueue
-// ==========================================
+// ==============================================================================================
+// IterablePriorityQueue: inherits from priority queue, exposes its private container (iterable)
+// ==============================================================================================
 template <typename T, typename Container = std::vector<T>, typename Compare = std::less<T>>
 class IterablePriorityQueue : public std::priority_queue<T, Container, Compare> {
 public:
@@ -77,9 +80,18 @@ public:
     }
 };
 
-// ==========================================
-// BankService: Core Business Logic
-// ==========================================
+// ==============================================================================================
+// BankService: Core Business Logic for 6 of the 7 main operations (excluding Monitor)
+// private variables:
+// 1. accountDatabase: in-memory storage for bank accounts. Maps bank account number to
+//                      bank account details stored in the BankAccount struct
+// 2. nextAccountNumber: next bank account number to be assigned to the next newly
+//                       created bank account
+// 3. exchangeRates: 2-dimensional array containing exchange rate for currency type
+//                   x->y accessible via exchangeRates[x][y], or the reverse.
+// public functions:
+// 1. openAccount, 2. closeAccount, 3. deposit, 4. withdraw, 5. checkBalance, 6. transferFunds
+// ==============================================================================================
 class BankService {
 private:
     std::map<uint32_t, BankAccount> accountDatabase;
@@ -98,6 +110,25 @@ private:
     };
 
 public:
+//===============================================================================================
+// openAccount: Function that implements the open account service
+//              Creates a new account with data in request, and notifies monitoring clients on success
+//              Creates a new BankAccount based on user inpt (below), adds mapping between
+//              incrementing nextAccountNumber and BankAccount. Returns a byte vector containing
+//              marshalled fields as response message.
+// Parameters:
+// 1. opcode: unmarshalled opcode (1 for opening an account),
+// 2. name: unmarshalled user provided name,
+// 3. pw: unmarshalled user provided password,
+// 4. curr: unmarshalled Integer constant converted to a Currency type enum,
+// 5. balance: unmarshalled float for initial account balance,
+// 6. clientsMonitoring: vector/iterable list of monitoring clients (whose monitor interval have
+//                       yet to expire)
+// 7. sock: SOCKET object used to send updates to each of the monitoring clients
+//
+// Returns:
+// Byte vector: || int opcode || int reply_id_len || string reply_id || uint32_t accountNumber
+//===============================================================================================
     std::vector<uint8_t> openAccount(
         int opcode,
         const std::string& name, 
@@ -127,9 +158,21 @@ public:
         }
 
         return buffer;
-        // return "Account Created: " + std::to_string(acc.accountNumber);
     }
 
+//============================================================================================
+// closeAccount: Function that implements the close account service. 
+//               Closes an existing account identified by account number.
+//               Checks whether name and pw matches with corresponding name and pw of account
+//
+// Returns:
+// 1. Byte vector containing SUCCESS IF account number is found in accountDatabase, name and pw
+//    match. Vector contains the following marshalled fields: 
+//    || int opcode || int reply_id_len || string reply_id || int reply_msg_len || string reply_msg
+// 2. Byte vector containing ERROR_ACCOUNT_NOT_FOUND IF account number not found in accountDatabase,
+//    or no match for name or pw. Vector contains the following marshalled fields:
+//    || int opcode || int reply_id_len || string reply_id || int error_msg_len || string error_msg
+//============================================================================================
     std::vector<uint8_t> closeAccount(
         int opcode,
         const std::string& name, 
@@ -158,7 +201,6 @@ public:
                 sendto(sock, reinterpret_cast<const char*>(buffer.data()), buffer.size(), 0, (struct sockaddr*)&client_sock, sizeof(client_sock));
             }
             return buffer;
-            // return reply_msg;
         }
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         std::string error_msg = "Error: Invalid credentials or account not found.";
@@ -168,9 +210,26 @@ public:
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
-        // return error_msg;
     }
 
+//============================================================================================
+// deposit: Function that implements the deposit service.
+//          Deposits an amount of a specified currency type into an account
+//          If the currency type of the initial balance of the account differs from the deposited
+//          amount, the amount is first converted to the native type before being added.
+//          Sends update to other monitoring clients if deposit operation is successful.
+//
+// Returns:
+// 1. If account exists, name and pw matches the name and password in-memory, then deposit()
+//    returns a byte vector with the following marshalled fields:
+//    ++------------++------------------++-----------------++-------------------------++
+//    || int opcode || int reply_id_len || string reply_id || uint32_t account_number ||
+//    ++------------++------------------++-----------------++-------------------------++
+//    || float amt  || int currency_type|| float new_bal   || int acc_currency_type   ||
+//    ++------------++------------------++-----------------++-------------------------++ 
+// 2. If account does not exist or invalid credentials were provided, returns a byte vector 
+//    with reply_id = ERROR_ACCOUNT_NOT_FOUND, and a corresponding error message instead.
+//=============================================================================================
     std::vector<uint8_t> deposit(
         int opcode,
         uint32_t accNum, 
@@ -208,7 +267,6 @@ public:
             }
 
             return buffer;
-            // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         std::string error_msg = "Error: Invalid credentials";
@@ -218,9 +276,29 @@ public:
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
-        // return error_msg;
     }
 
+//=============================================================================================
+// withdraw: Function that implements the withdrawal service.
+//           Withdraws an amount of a specified currency type from an existing
+//           account. If the currency type to be withdrawn differs from the native type, the
+//           withdrawal amount is first converted to the native type before being deducted.
+//           Sends update to other monitoring clients if withdrawal is successful.
+// 
+// Returns:
+// 1. If account exists, name and pw matches the name and password in accountDatabase, then
+//    withdraw() returns a byte vector with the following marshalled types:
+//    ++------------++------------------++-----------------++-------------------------++
+//    || int opcode || int reply_id_len || string reply_id || uint32_t account_number ||
+//    ++------------++------------------++-----------------++-------------------------++
+//    || float amt  || int currency_type|| float new_bal   || int acc_currency_type   ||
+//    ++------------++------------------++-----------------++-------------------------++ 
+// 2. If there is insufficient balance in the account to make a withdrawal, a byte vector 
+//    with reply_id = "ERROR_INSUFFICIENT_BALANCE" and an accompanying error message is returned
+//    instead.
+// 3. If account does not exist or invalid credentials were provided, returns a byte vector 
+//    with reply_id = ERROR_ACCOUNT_NOT_FOUND, and a corresponding error message instead. 
+//=============================================================================================
     std::vector<uint8_t> withdraw(
         int opcode,
         uint32_t accNum, 
@@ -249,7 +327,6 @@ public:
                 marshallStrings(buffer.data(), reply_id, &offset);
                 marshallStrings(buffer.data(), error_msg, &offset);
                 return buffer;
-                // return "Error: Insufficient balance.";
             }
             accountDatabase[accNum].balance -= amount * rate;
             std::cout << "Withdrew from account " << accNum << " an amount of " << amount << CurrToStr.at(curr) << " | New Balance: " << accountDatabase[accNum].balance << CurrToStr.at(accountDatabase[accNum].currency) << std::endl;
@@ -270,7 +347,6 @@ public:
             }
 
             return buffer;
-            // return "New Balance: " + std::to_string(accountDatabase[accNum].balance);
         }
         reply_id = "ERROR_ACCOUNT_NOT_FOUND";
         error_msg = "Error: Invalid credentials";
@@ -280,9 +356,19 @@ public:
         marshallStrings(buffer.data(), reply_id, &offset);
         marshallStrings(buffer.data(), error_msg, &offset);
         return buffer;
-        // return "Error: Invalid credentials.";
     }
 
+//=============================================================================================
+// checkBalance: Function that implements the check balance service.
+//               It returns the current balance of a specified account and sends an update
+//               to other monitoring clients if operation was successful.
+// Returns:
+// 1. If account exists, and password given matches the copy stored in accountDatabase, then
+//    checkBalance() returns a byte vector containing the account number and the balance, in
+//    addition to the opcode and reply_id like other functions.
+// 2. If account does not exist, or password does not match, then a byte vector with reply_id
+//    ERROR_ACCOUNT_NOT_FOUND as well as the corresponding error message is returned instead.
+//=============================================================================================
     std::vector<uint8_t> checkBalance(
         int opcode,
         uint32_t accNum,
@@ -321,6 +407,36 @@ public:
         return buffer;
     }
 
+//=============================================================================================
+// transferFunds: Function that implements the transfer funds service.
+//                Withdraws an amount from a source account and transfers that amount to be deposited
+//                into a destination account. If currency type differs between accounts, the amount
+//                is first converted to the destination account currency type.
+//                Sends an update to other monitoring clients if successful.
+//                
+// Returns:
+// 1. If both the source and destination account exists, and the password provided for the source
+//    account matches the entry in the accountDatabase, then transferFunds() returns the byte vector
+//    containing the following marshalled fields:
+//    - dest_amount is the amount converted to the destination account currency type (determined
+//    by exchange rate)
+//    - rate: exchange rate between the currencies of the source and destination accounts
+//    ++------------++------------------++-----------------++-----------------------------++
+//    || int opcode || int reply_id_len || string reply_id || uint32_t src_account_number ||
+//    ++--------------------------------++-----------------++-----------------------------++
+//    || uint32_t dst_account_number    || float amount    || float dest_amount           ||
+//    ++--------------------------------++-----------------++-----------------------------++
+//    || float new_src_account_bal      || float new_dst_account_bal || float rate        ||
+//    ++--------------------------------++------------------------------------------------++
+//    || int src_acc_currency_type      || int dst_acc_currency_type                      ||
+//    ++--------------------------------++------------------------------------------------++
+// 2. If the source account does not exist or the pw does not match, then a byte vector with reply_id
+//    ERROR_ACCOUNT_NOT_FOUND as well as the corresponding error message will be returned.
+// 3. If the destination account does not exist, a byte vector with reply_id, ERROR_DEST_NOT_FOUND
+//    and the corresponding error message will be returned instead.
+// 4. If the source account does not contain sufficient balance, then a byte vector with reply_id
+//    ERROR_INSUFFICIENT_BALANCE and the corresponding error message will be returned.
+//=============================================================================================
     std::vector<uint8_t> transferFunds(
         int opcode,
         uint32_t srcAccNum,
@@ -428,9 +544,33 @@ public:
     }
 };
 
-// ==========================================
-// MessageParser: UDP Payload Unmarshalling
-// ==========================================
+// =============================================================================================
+// MessageParser: UDP Payload Unmarshalling. Unmarshalls the request payload. First to retrieve
+//                the opcode to determine the type of service requested, then within the switch
+//                case itself, the rest of the fields are unmarshalled with utility functions
+//                defined within the class to be passed into the implementations that live in
+//                the BankService class.
+// private variables:
+// 1. requestHistory:    Used to implement At-most-once invocation semantics, in which responses to
+//                       requests are stored in main memory to prevent re-execution on retransmission.
+// 2. semantics:         The string representation of one of two invocation semantics (At-least-once/At-most-once)
+//                       Initialised upon instantiation of the MessageParser class.
+// 3. clientsMonitoring: A iterable min-heap which stores monitoring client details
+// 4. clientId:          Unique identifier for each record in clientsMonitoring. Incremented on each addition
+// 5. m:                 A lock that has to be acquired before any modification can be made to clientsMonitoring
+// 6. client_added:      A condition variable used to notify the cleaner thread that a new client record
+//                       has been added to clientsMonitoring
+// 7. running:           A boolean that controls the running status of the cleaner thread. On destruction,
+//                       all background threads are waked then joined before the main thread exits.
+// 8. cleaner_thread:    The thread that deletes client records from clientsMonitoring once the monitor
+//                       interval has expired.
+// 
+// Unmarshalling functions for int, float, strings, longs: readInt32(), readFloat(), readString(), readLong64()
+// Accepts a buffer which contains the request payload (passed by UDPServer), and updates offset on each read.
+// 
+// Switch cases unmarshalls rest of fields and waits for a response to be returned which it passes
+// onto UDPServer for the actual transmission of the server response.
+// =============================================================================================
 class MessageParser {
 private:
     std::map<std::string, std::vector<uint8_t>> requestHistory;
@@ -469,7 +609,7 @@ private:
 
     int64_t readLong64(const char* buffer, int& offset) {
         uint32_t tmp = readInt32(buffer, offset);
-        int64_t net_val = ((uint64_t)(tmp & 0xFFFFFFFF) << 32);
+        int64_t net_val = (static_cast<uint64_t>(tmp) << 32);
         tmp = readInt32(buffer, offset);
         return net_val | tmp;
     }
@@ -491,10 +631,12 @@ public:
         int opcode = readInt32(buffer, offset);
         int requestId = readInt32(buffer, offset);
 
+        // Unique request identifier to differentiate between multiple clients sending requests
         std::string clientKey = std::string(inet_ntoa(client_socketAddr.sin_addr)) + ":" + 
                                 std::to_string(ntohs(client_socketAddr.sin_port)) + "-" + 
                                 std::to_string(requestId);
 
+        // if key is re-encountered on receiving request, send the response stored in requestHistory instead (AMO only)
         if (requestHistory.count(clientKey)) {
             std::cout << "Duplicate request " << clientKey << " detected. Re-sending cached reply." << std::endl;
             return requestHistory[clientKey];
@@ -542,15 +684,17 @@ public:
             case 5: { // Monitor
                 int64_t duration = readLong64(buffer, offset);
                 std::cout << "duration: " << duration << std::endl;
-                auto expiry = std::chrono::steady_clock::now() + std::chrono::nanoseconds(duration);
-                m.lock();
+                auto expiry = std::chrono::steady_clock::now() + std::chrono::nanoseconds(duration); // use monotonic clock to calculate monitor interval expiry
+                m.lock(); // acquire lock before modifying clientsMonitoring
                 clientsMonitoring.push({clientId++, client_socketAddr, expiry});
                 for (const auto& item : clientsMonitoring.internal_vector_form()) {
                     std::cout << "Testing: " << item.id << ": " << item.client_sock.sin_port << std::endl;
                 }
                 std::cout << "------" << std::endl;
                 m.unlock();
-                client_added.notify_one(); // wake 
+                client_added.notify_one(); // release lock then notify cleaner_thread
+
+                // send an acknowledgement back to the client, so it can block
                 reply_id = "ACK";
                 reply_msg = std::string("Server will send updates for ") + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(duration)).count()) + std::string(" seconds");
                 offset = 0;
@@ -594,19 +738,19 @@ public:
         std::unique_lock<std::mutex> lock(m);
         while (running) {
             if (clientsMonitoring.empty()) {
-                client_added.wait(lock, [this] { return !clientsMonitoring.empty() || !running; });
+                client_added.wait(lock, [this] { return !clientsMonitoring.empty() || !running; }); // wake if new record added
             } else {
                 auto nextExpiry = clientsMonitoring.top().expiry;
-                if (nextExpiry <= std::chrono::steady_clock::now()) {
+                if (nextExpiry <= std::chrono::steady_clock::now()) { // check first whether already expired
                     clientsMonitoring.pop();
                     continue;
                 }
                 bool status = client_added.wait_until(lock, nextExpiry, [this, &nextExpiry] {
                     return !running || (!clientsMonitoring.empty() && clientsMonitoring.top().expiry < nextExpiry);
                 }); // lock reacquired on notification, predicate true, or on next expiry
-                if (status) // predicate evaluates to true
+                if (status) // predicate evaluates to true, means the newly added client expires sooner than the one currently being tracked
                     continue;
-                else { // nextExpiry has elapsed, pop
+                else { // nextExpiry of current tracked entry has elapsed, pop
                     clientsMonitoring.pop();
                 }
             }
@@ -669,14 +813,22 @@ public:
             int bytesReceived = recvfrom(sock_des, buffer, SIZE, 0, (struct sockaddr*)&client_socketAddr, &len_client_socketAddr);
             
             if (bytesReceived == SOCKET_ERROR) continue;
+            
+            // print received request
+            std::cout << std::endl << "request size: " << bytesReceived << std::endl;
+            for (size_t i = 0; i < bytesReceived; ++i) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(buffer[i]) << " ";
+            }
+            std::cout << std::dec << std::endl;
 
             if (drop_request > 0.0 && dis(gen) < drop_request) {
                 std::cout << "[SIMULATION] Dropped incoming request from client." << std::endl;
                 continue;
             }
 
+            // prints outgoing response
             std::vector<uint8_t> response = parser.processMessage(buffer, sock_des, client_socketAddr, bank);
-            std::cout << std::endl << "size: " << response.size() << std::endl;
+            std::cout << std::endl << "response size: " << response.size() << std::endl;
             for (size_t i = 0; i < response.size(); ++i) {
                 std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(response[i]) << " ";
             }

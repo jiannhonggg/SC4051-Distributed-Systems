@@ -378,6 +378,7 @@ public class MainApp {
         }
     }
 
+    // Unmarshalls response message and presents the unmarshalled data to the user through the terminal
     private static String presentData(ByteBuffer res_buf, int opcode, boolean isMonitor) {
         long accNum;
         float balance, amount;

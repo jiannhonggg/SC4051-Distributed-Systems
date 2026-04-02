@@ -60,7 +60,9 @@ public class ClientSocket {
     }
 
     /**
-     * Receive function specifically for the monitor service. Set SO_TIMEOUT to interval
+     * Function specifically for the monitor service to repeatedly receive updates
+     * If monitor interval has expired, in which SO_TIMEOUT is set close to zero. Exception will be caught
+     * and a byte array of 0 length is returned.
      */
     public byte[] monitor_receive() throws Exception {
         byte[] buffer = new byte[1024]; 
@@ -77,6 +79,7 @@ public class ClientSocket {
         this.socket.setSoTimeout(interval);
     }
 
+    // resets the timeout after monitor interval has expired back to 2s
     public void reset_timeout() throws Exception{
         this.socket.setSoTimeout(TIMEOUT);
     }
