@@ -73,7 +73,7 @@ java MainApp --server_ip=10.96.x.x --server_port=8080 --client_port=8082   <- Cl
 4. Withdraw
 5. Monitor Account (Callback)
 6. Check Balance (Idempotent)
-7. Failure Simulation
+7. Transfer Funds (Non-Idempotent)
+8. Failure Simulation
 
 ### To Do
-1. Transfer Funds (Non-Idempotent)
