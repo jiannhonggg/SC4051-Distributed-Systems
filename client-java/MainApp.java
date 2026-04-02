@@ -335,7 +335,13 @@ public class MainApp {
                 
                 if (requestPayload != null) {
                     // Use the new sendAndReceive for At-Least-Once reliability
-                    byte[] response = client.sendAndReceive(requestPayload);
+                    byte[] response;
+                    try {
+                        response = client.sendAndReceive(requestPayload);
+                    } catch (Exception e) {
+                        System.out.println(e.getMessage());
+                        continue;
+                    }
                     
                     boolean start_clock = false;
                     long start_time, end_time;
